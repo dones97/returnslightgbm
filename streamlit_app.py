@@ -12,7 +12,7 @@ import os
 import pickle
 from data_collector_enhanced import EnhancedStockDataCollector, collect_data_for_universe
 from model_trainer import ReturnDirectionModel, StockScorer
-from stock_selector import quick_select_top_stocks
+from nifty500_tickers import get_quality_stocks
 
 # Page configuration
 st.set_page_config(
@@ -164,10 +164,15 @@ class EnhancedStockScreener:
             max_stocks = st.number_input(
                 "Maximum number of stocks to process",
                 min_value=10,
-                max_value=2000,
-                value=500,
-                help="Recommended: 500 stocks for robust analysis"
+                max_value=200,
+                value=150,
+                help="Pre-defined quality list has ~195 stocks. Recommended: 50-150 stocks"
             )
+
+        # Show info about stock availability
+        from nifty500_tickers import QUALITY_STOCKS
+        st.info(f"ℹ️ Using pre-defined quality stock list ({len(QUALITY_STOCKS)} stocks available). "
+                f"These are Nifty 50/100/200 companies sorted by market cap.")
 
         use_cached = st.checkbox("Use cached data if available", value=True)
 
@@ -201,22 +206,20 @@ class EnhancedStockScreener:
             progress_bar.progress(10)
             status_placeholder.info(f"✅ Found {len(tickers)} tickers in universe")
 
-            # Use quality-based stock selection instead of alphabetical
-            status_placeholder.info(f"🎯 Selecting top {max_stocks} quality stocks (by market cap, volume, data availability)...")
+            # Use pre-defined quality stocks list (avoids rate limiting)
+            status_placeholder.info(f"🎯 Selecting top {max_stocks} quality stocks from Nifty 500...")
             progress_bar.progress(15)
 
-            try:
-                # Use stock selector to get quality stocks
-                selected_tickers = quick_select_top_stocks(n=max_stocks)
-                if selected_tickers and len(selected_tickers) > 0:
-                    tickers = selected_tickers
-                    status_placeholder.info(f"✅ Selected {len(tickers)} quality stocks")
-                else:
-                    # Fallback to first N if selector fails
-                    st.warning("Quality selector failed, using first stocks from universe")
-                    tickers = tickers[:max_stocks]
-            except Exception as e:
-                st.warning(f"Quality selector error: {str(e)[:100]}. Using first stocks from universe")
+            # Get quality stocks from pre-defined list (no API calls needed!)
+            selected_tickers = get_quality_stocks(n=max_stocks)
+            if selected_tickers and len(selected_tickers) > 0:
+                tickers = selected_tickers
+                if len(tickers) < max_stocks:
+                    st.warning(f"⚠️ Requested {max_stocks} stocks but only {len(tickers)} available in pre-defined list. Using all {len(tickers)} stocks.")
+                status_placeholder.info(f"✅ Selected {len(tickers)} quality stocks (Nifty 50/100/200 companies)")
+            else:
+                # Fallback to first N if list is empty
+                st.warning("Pre-defined list empty, using first stocks from universe")
                 tickers = tickers[:max_stocks]
 
             # Collect data with progress updates
