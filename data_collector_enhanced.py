@@ -183,6 +183,9 @@ class EnhancedStockDataCollector:
         # Create DataFrame
         quarterly_data = pd.DataFrame(metrics_by_quarter)
         quarterly_data['Date'] = pd.to_datetime(quarterly_data['Date'])
+        # Normalize timezone to avoid comparison errors
+        if hasattr(quarterly_data['Date'].dtype, 'tz') and quarterly_data['Date'].dtype.tz is not None:
+            quarterly_data['Date'] = quarterly_data['Date'].dt.tz_localize(None)
         quarterly_data = quarterly_data.sort_values('Date')
         quarterly_data = quarterly_data.set_index('Date')
 
