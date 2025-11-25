@@ -436,37 +436,97 @@ class EnhancedStockScreener:
             except:
                 pass
 
-        if 'data' not in st.session_state:
-            if os.path.exists(self.data_file):
-                with st.spinner("Loading cached data..."):
-                    with open(self.data_file, 'rb') as f:
-                        data = pickle.load(f)
-                    st.session_state['data'] = data
-            else:
-                st.warning("⚠️ Please collect data first (Step 1)")
-                return
-
-        data = st.session_state['data']
-
         st.write("""
-        This page scores all stocks based on their characteristics and assigns them to quality quintiles.
+        This page scores **all stocks** in the NSE universe using the trained model.
+        The model was trained on high-quality stocks with historical data, but screening applies to the entire universe.
         Higher quintiles (Q4, Q5) indicate stocks predicted to have positive returns.
         """)
+
+        # Option to collect fresh screening data
+        with st.expander("⚙️ Screening Data Options"):
+            st.info("""
+            **Important:** Screening requires current fundamental data for all ~2,000 NSE stocks.
+
+            - **Use Cached Data** (Recommended): Fast, uses pre-collected data
+            - **Collect Fresh Data**: Slow (~30-60 min), may hit rate limits
+            """)
+
+            use_cached_screening = st.checkbox("Use cached screening data if available", value=True)
+
+            if st.button("🔄 Collect Fresh Screening Data", help="Only use this if you need the absolute latest data"):
+                status_placeholder = st.empty()
+                progress_bar = st.progress(0)
+
+                # Load ENTIRE universe for screening
+                status_placeholder.info("🔍 Loading entire NSE stock universe...")
+                progress_bar.progress(5)
+
+                all_tickers = self.load_universe_tickers()
+                if not all_tickers:
+                    all_tickers = self.load_backup_tickers()
+
+                if not all_tickers:
+                    st.error("Failed to load stock tickers!")
+                    return
+
+                status_placeholder.info(f"✅ Found {len(all_tickers)} stocks in NSE universe")
+                progress_bar.progress(10)
+
+                # Collect CURRENT data for all stocks (not historical, just latest)
+                status_placeholder.info(f"📥 Collecting current fundamental data for {len(all_tickers)} stocks...")
+                status_placeholder.warning("⏱️ This will take 30-60 minutes and may hit rate limits. Please be patient...")
+                progress_bar.progress(15)
+
+                # Collect current data (last 6 months to get latest fundamentals)
+                screening_data = collect_data_for_universe(all_tickers, lookback_years=0.5)
+
+                if screening_data is None or len(screening_data) == 0:
+                    st.error("Failed to collect screening data! Try again later if rate limited.")
+                    return
+
+                # Save screening data separately
+                screening_cache_file = 'screening_data_cache.pkl'
+                with open(screening_cache_file, 'wb') as f:
+                    pickle.dump(screening_data, f)
+
+                st.session_state['screening_data'] = screening_data
+
+                progress_bar.progress(100)
+                status_placeholder.markdown('<div class="status-success">✅ Screening data collected!</div>', unsafe_allow_html=True)
+                st.success(f"Collected data for {screening_data['Ticker'].nunique()} stocks with sufficient data")
 
         if st.button("Run Screening", type="primary"):
             status_placeholder = st.empty()
             progress_bar = st.progress(0)
 
-            status_placeholder.info("📊 Scoring stocks...")
-            progress_bar.progress(20)
+            # Load screening data (either cached or fresh)
+            screening_cache_file = 'screening_data_cache.pkl'
+
+            if 'screening_data' in st.session_state:
+                screening_data = st.session_state['screening_data']
+                status_placeholder.info("✅ Using screening data from this session")
+            elif use_cached_screening and os.path.exists(screening_cache_file):
+                status_placeholder.info("📂 Loading cached screening data...")
+                with open(screening_cache_file, 'rb') as f:
+                    screening_data = pickle.load(f)
+                st.session_state['screening_data'] = screening_data
+                status_placeholder.info(f"✅ Loaded screening data for {screening_data['Ticker'].nunique()} stocks")
+            else:
+                st.error("⚠️ No screening data available! Please collect fresh screening data first using the button above.")
+                return
+
+            progress_bar.progress(30)
+
+            status_placeholder.info("📊 Scoring all stocks with the trained model...")
+            progress_bar.progress(50)
 
             # Initialize scorer
             scorer = StockScorer(model)
 
-            # Score universe
-            results = scorer.score_current_universe(data)
+            # Score entire universe
+            results = scorer.score_current_universe(screening_data)
 
-            progress_bar.progress(80)
+            progress_bar.progress(90)
             status_placeholder.info("💾 Saving results...")
 
             # Save results
@@ -478,7 +538,7 @@ class EnhancedStockScreener:
             progress_bar.progress(100)
             status_placeholder.markdown('<div class="status-success">✅ Screening complete!</div>', unsafe_allow_html=True)
 
-            st.success(f"Analyzed {len(results)} stocks.")
+            st.success(f"Analyzed {len(results)} stocks from the entire NSE universe!")
 
         # Display results if available
         if 'results' in st.session_state or os.path.exists(self.results_file):
