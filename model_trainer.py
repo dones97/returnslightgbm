@@ -13,6 +13,7 @@ from sklearn.metrics import (
 from typing import List, Tuple, Dict
 import pickle
 import warnings
+from datetime import datetime
 warnings.filterwarnings('ignore')
 
 
@@ -32,6 +33,7 @@ class ReturnDirectionModel:
         self.model = None
         self.feature_names = None
         self.feature_importance = None
+        self.model_metadata = {}
 
     def prepare_features(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
         """
@@ -164,6 +166,22 @@ class ReturnDirectionModel:
             'classification_report': classification_report(y_test, y_pred)
         }
 
+        # Store model metadata
+        self.model_metadata = {
+            'trained_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'n_stocks': df['Ticker'].nunique() if 'Ticker' in df.columns else 'Unknown',
+            'n_training_samples': len(X_train),
+            'n_test_samples': len(X_test),
+            'n_features': len(feature_cols),
+            'test_size': self.test_size,
+            'use_time_series_split': use_time_series_split,
+            'data_date_range': f"{df['Date'].min()} to {df['Date'].max()}" if 'Date' in df.columns else 'Unknown',
+            'best_iteration': self.model.best_iteration,
+            'metrics': {k: float(v) if isinstance(v, (np.floating, np.integer)) else v
+                       for k, v in metrics.items() if k not in ['confusion_matrix', 'classification_report']},
+            'hyperparameters': params
+        }
+
         print("\n" + "="*60)
         print("Model Performance Metrics")
         print("="*60)
@@ -215,15 +233,73 @@ class ReturnDirectionModel:
 
         return self.feature_importance.head(top_n)
 
+    def explain_prediction(self, df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
+        """
+        Get feature contributions for a specific stock's prediction
+
+        Args:
+            df: Feature dataframe
+            ticker: Specific ticker to explain (if None, explains last row)
+
+        Returns:
+            DataFrame with feature contributions sorted by absolute value
+        """
+        if self.model is None:
+            raise ValueError("Model not trained yet. Call train_model() first.")
+
+        # Prepare features
+        df_processed, _ = self.prepare_features(df)
+
+        # Filter to specific ticker if provided
+        if ticker:
+            df_processed = df_processed[df_processed['Ticker'] == ticker]
+            if df_processed.empty:
+                raise ValueError(f"Ticker {ticker} not found in data")
+
+        # Get the latest record
+        df_processed = df_processed.sort_values('Date')
+        latest_record = df_processed.iloc[[-1]]
+        X = latest_record[self.feature_names]
+
+        # Get prediction
+        pred_proba = self.model.predict(X, num_iteration=self.model.best_iteration)[0]
+
+        # Get feature values
+        feature_values = X.iloc[0].to_dict()
+
+        # Get feature importance as proxy for contribution
+        # (True SHAP values would be better but require shap library)
+        feature_imp = self.feature_importance.set_index('feature')['importance'].to_dict()
+
+        # Create contribution DataFrame
+        contributions = []
+        for feature in self.feature_names:
+            value = feature_values.get(feature, 0)
+            importance = feature_imp.get(feature, 0)
+            # Approximate contribution as feature_value * importance
+            contribution = value * importance if not np.isnan(value) else 0
+            contributions.append({
+                'feature': feature,
+                'value': value,
+                'importance': importance,
+                'contribution': contribution
+            })
+
+        contrib_df = pd.DataFrame(contributions)
+        contrib_df = contrib_df.sort_values('contribution', ascending=False, key=abs)
+
+        return contrib_df, pred_proba
+
     def save_model(self, filepath: str):
-        """Save trained model to file"""
+        """Save trained model with metadata to file"""
         if self.model is None:
             raise ValueError("Model not trained yet. Call train_model() first.")
 
         model_data = {
             'model': self.model,
             'feature_names': self.feature_names,
-            'feature_importance': self.feature_importance
+            'feature_importance': self.feature_importance,
+            'metadata': self.model_metadata
         }
 
         with open(filepath, 'wb') as f:
@@ -232,13 +308,14 @@ class ReturnDirectionModel:
         print(f"Model saved to {filepath}")
 
     def load_model(self, filepath: str):
-        """Load trained model from file"""
+        """Load trained model with metadata from file"""
         with open(filepath, 'rb') as f:
             model_data = pickle.load(f)
 
         self.model = model_data['model']
         self.feature_names = model_data['feature_names']
         self.feature_importance = model_data['feature_importance']
+        self.model_metadata = model_data.get('metadata', {})
 
         print(f"Model loaded from {filepath}")
 
