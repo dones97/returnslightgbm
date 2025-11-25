@@ -97,6 +97,11 @@ class ReturnDirectionModel:
         # Train-test split
         if use_time_series_split:
             # For time series, split by date to avoid look-ahead bias
+            # Convert Date to datetime and remove timezone info to avoid comparison errors
+            df_processed['Date'] = pd.to_datetime(df_processed['Date'])
+            if hasattr(df_processed['Date'].dtype, 'tz') and df_processed['Date'].dtype.tz is not None:
+                df_processed['Date'] = df_processed['Date'].dt.tz_localize(None)
+
             df_processed = df_processed.sort_values('Date')
             split_idx = int(len(df_processed) * (1 - self.test_size))
             X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
