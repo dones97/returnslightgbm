@@ -447,9 +447,9 @@ class StockScorer:
 
         # Get model predictions (probability of positive return)
         try:
-            latest_data['return_probability'] = self.model.predict_proba(latest_data)
+            latest_data['predicted_probability'] = self.model.predict_proba(latest_data)
         except:
-            latest_data['return_probability'] = np.nan
+            latest_data['predicted_probability'] = np.nan
 
         # Calculate factor scores
         latest_data = self.calculate_factor_scores(latest_data)
