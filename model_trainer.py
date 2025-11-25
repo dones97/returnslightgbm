@@ -262,6 +262,12 @@ class ReturnDirectionModel:
                 raise ValueError(f"Ticker {ticker} not found in data")
 
         # Get the latest record
+        # Normalize timezone to avoid comparison errors
+        if 'Date' in df_processed.columns:
+            df_processed['Date'] = pd.to_datetime(df_processed['Date'])
+            if hasattr(df_processed['Date'].dtype, 'tz') and df_processed['Date'].dtype.tz is not None:
+                df_processed['Date'] = df_processed['Date'].dt.tz_localize(None)
+
         df_processed = df_processed.sort_values('Date')
         latest_record = df_processed.iloc[[-1]]
         X = latest_record[self.feature_names]
@@ -441,6 +447,12 @@ class StockScorer:
         """
         # Get most recent data for each stock
         if 'Date' in current_data.columns:
+            # Normalize timezone to avoid comparison errors
+            current_data = current_data.copy()
+            current_data['Date'] = pd.to_datetime(current_data['Date'])
+            if hasattr(current_data['Date'].dtype, 'tz') and current_data['Date'].dtype.tz is not None:
+                current_data['Date'] = current_data['Date'].dt.tz_localize(None)
+
             latest_data = current_data.sort_values('Date').groupby('Ticker').tail(1)
         else:
             latest_data = current_data.copy()
