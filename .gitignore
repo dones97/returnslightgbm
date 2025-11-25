@@ -40,7 +40,7 @@ ENV/
 
 # Data Files (cache and outputs - don't commit)
 stock_data_cache.pkl
-trained_model.pkl
+# trained_model.pkl  # ALLOW THIS - We want to commit the trained model!
 screening_results.pkl
 selected_stocks_cache.csv
 data_availability_check.csv
@@ -67,8 +67,8 @@ Thumbs.db
 # Uncomment if you don't want to commit CSVs
 # *.csv
 
-# Model outputs
-*.pkl
+# Model outputs (except trained_model.pkl which we want to commit)
+# *.pkl  # Commented out - we allow trained_model.pkl
 *.joblib
 *.h5
 *.hdf5
