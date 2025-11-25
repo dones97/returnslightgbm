@@ -12,6 +12,7 @@ import os
 import pickle
 from data_collector_enhanced import EnhancedStockDataCollector, collect_data_for_universe
 from model_trainer import ReturnDirectionModel, StockScorer
+from stock_selector import quick_select_top_stocks
 
 # Page configuration
 st.set_page_config(
@@ -200,8 +201,23 @@ class EnhancedStockScreener:
             progress_bar.progress(10)
             status_placeholder.info(f"✅ Found {len(tickers)} tickers in universe")
 
-            # Limit number of stocks
-            tickers = tickers[:max_stocks]
+            # Use quality-based stock selection instead of alphabetical
+            status_placeholder.info(f"🎯 Selecting top {max_stocks} quality stocks (by market cap, volume, data availability)...")
+            progress_bar.progress(15)
+
+            try:
+                # Use stock selector to get quality stocks
+                selected_tickers = quick_select_top_stocks(n=max_stocks)
+                if selected_tickers and len(selected_tickers) > 0:
+                    tickers = selected_tickers
+                    status_placeholder.info(f"✅ Selected {len(tickers)} quality stocks")
+                else:
+                    # Fallback to first N if selector fails
+                    st.warning("Quality selector failed, using first stocks from universe")
+                    tickers = tickers[:max_stocks]
+            except Exception as e:
+                st.warning(f"Quality selector error: {str(e)[:100]}. Using first stocks from universe")
+                tickers = tickers[:max_stocks]
 
             # Collect data with progress updates
             status_placeholder.info(f"📥 Collecting data for {len(tickers)} stocks... This may take 15-30 minutes...")
