@@ -188,29 +188,50 @@ class EnhancedStockDataCollector:
 
         # Calculate growth rates (YoY and QoQ)
         if len(quarterly_data) >= 2:
-            quarterly_data['Revenue_Growth_QoQ'] = quarterly_data['Total_Revenue'].pct_change()
-            quarterly_data['Net_Income_Growth_QoQ'] = quarterly_data['Net_Income'].pct_change()
+            if 'Total_Revenue' in quarterly_data.columns:
+                quarterly_data['Revenue_Growth_QoQ'] = quarterly_data['Total_Revenue'].pct_change()
+            if 'Net_Income' in quarterly_data.columns:
+                quarterly_data['Net_Income_Growth_QoQ'] = quarterly_data['Net_Income'].pct_change()
 
         if len(quarterly_data) >= 4:  # YoY needs 4 quarters
-            quarterly_data['Revenue_Growth_YoY'] = quarterly_data['Total_Revenue'].pct_change(periods=4)
-            quarterly_data['Net_Income_Growth_YoY'] = quarterly_data['Net_Income'].pct_change(periods=4)
-            quarterly_data['EBITDA_Growth_YoY'] = quarterly_data['EBITDA'].pct_change(periods=4)
+            if 'Total_Revenue' in quarterly_data.columns:
+                quarterly_data['Revenue_Growth_YoY'] = quarterly_data['Total_Revenue'].pct_change(periods=4)
+            if 'Net_Income' in quarterly_data.columns:
+                quarterly_data['Net_Income_Growth_YoY'] = quarterly_data['Net_Income'].pct_change(periods=4)
+            if 'EBITDA' in quarterly_data.columns:
+                quarterly_data['EBITDA_Growth_YoY'] = quarterly_data['EBITDA'].pct_change(periods=4)
 
         # Calculate trailing 12-month metrics
         if len(quarterly_data) >= 4:
-            quarterly_data['TTM_Revenue'] = quarterly_data['Total_Revenue'].rolling(window=4, min_periods=4).sum()
-            quarterly_data['TTM_Net_Income'] = quarterly_data['Net_Income'].rolling(window=4, min_periods=4).sum()
-            quarterly_data['TTM_Operating_Income'] = quarterly_data['Operating_Income'].rolling(window=4, min_periods=4).sum()
-            quarterly_data['TTM_EBITDA'] = quarterly_data['EBITDA'].rolling(window=4, min_periods=4).sum()
-            quarterly_data['TTM_Operating_Cash_Flow'] = quarterly_data['Operating_Cash_Flow'].rolling(window=4, min_periods=4).sum()
+            # Only calculate TTM for columns that exist
+            if 'Total_Revenue' in quarterly_data.columns:
+                quarterly_data['TTM_Revenue'] = quarterly_data['Total_Revenue'].rolling(window=4, min_periods=4).sum()
+
+            if 'Net_Income' in quarterly_data.columns:
+                quarterly_data['TTM_Net_Income'] = quarterly_data['Net_Income'].rolling(window=4, min_periods=4).sum()
+
+            if 'Operating_Income' in quarterly_data.columns:
+                quarterly_data['TTM_Operating_Income'] = quarterly_data['Operating_Income'].rolling(window=4, min_periods=4).sum()
+
+            if 'EBITDA' in quarterly_data.columns:
+                quarterly_data['TTM_EBITDA'] = quarterly_data['EBITDA'].rolling(window=4, min_periods=4).sum()
+
+            if 'Operating_Cash_Flow' in quarterly_data.columns:
+                quarterly_data['TTM_Operating_Cash_Flow'] = quarterly_data['Operating_Cash_Flow'].rolling(window=4, min_periods=4).sum()
 
             # Calculate ROE and ROA using TTM earnings
-            quarterly_data['ROE'] = quarterly_data['TTM_Net_Income'] / quarterly_data['Stockholders_Equity']
-            quarterly_data['ROA'] = quarterly_data['TTM_Net_Income'] / quarterly_data['Total_Assets']
+            if 'TTM_Net_Income' in quarterly_data.columns and 'Stockholders_Equity' in quarterly_data.columns:
+                quarterly_data['ROE'] = quarterly_data['TTM_Net_Income'] / quarterly_data['Stockholders_Equity']
+
+            if 'TTM_Net_Income' in quarterly_data.columns and 'Total_Assets' in quarterly_data.columns:
+                quarterly_data['ROA'] = quarterly_data['TTM_Net_Income'] / quarterly_data['Total_Assets']
 
             # Calculate ROIC (Return on Invested Capital)
-            invested_capital = quarterly_data['Stockholders_Equity'] + quarterly_data['Total_Debt']
-            quarterly_data['ROIC'] = quarterly_data['TTM_Operating_Income'] / invested_capital
+            if ('TTM_Operating_Income' in quarterly_data.columns and
+                'Stockholders_Equity' in quarterly_data.columns and
+                'Total_Debt' in quarterly_data.columns):
+                invested_capital = quarterly_data['Stockholders_Equity'] + quarterly_data['Total_Debt']
+                quarterly_data['ROIC'] = quarterly_data['TTM_Operating_Income'] / invested_capital
 
         # Calculate price-based ratios if price data available
         if not price_data.empty and len(quarterly_data) > 0:
@@ -255,6 +276,12 @@ class EnhancedStockDataCollector:
         # Reset index for both
         monthly_price_data = monthly_price_data.reset_index()
         quarterly_fundamentals = quarterly_fundamentals.reset_index()
+
+        # Remove timezone info to avoid merge issues
+        if pd.api.types.is_datetime64_any_dtype(monthly_price_data['Date']):
+            monthly_price_data['Date'] = pd.to_datetime(monthly_price_data['Date']).dt.tz_localize(None)
+        if pd.api.types.is_datetime64_any_dtype(quarterly_fundamentals['Date']):
+            quarterly_fundamentals['Date'] = pd.to_datetime(quarterly_fundamentals['Date']).dt.tz_localize(None)
 
         # Merge with forward fill
         merged = pd.merge_asof(
