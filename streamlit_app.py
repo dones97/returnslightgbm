@@ -475,10 +475,18 @@ class EnhancedStockScreener:
             col1, col2, col3 = st.columns(3)
 
             with col1:
+                # Get available quintiles and set safe defaults
+                available_quintiles = sorted(results['quality_quintile'].unique().tolist(), reverse=True)
+                # Only use Q5 and Q4 as defaults if they exist
+                default_quintiles = [q for q in ['Q5', 'Q4'] if q in available_quintiles]
+                # If no Q5/Q4, use all available quintiles
+                if not default_quintiles:
+                    default_quintiles = available_quintiles
+
                 quintile_filter = st.multiselect(
                     "Quality Quintile",
-                    options=sorted(results['quality_quintile'].unique().tolist(), reverse=True),
-                    default=['Q5', 'Q4'],
+                    options=available_quintiles,
+                    default=default_quintiles,
                     help="Q5 = Highest quality, Q1 = Lowest quality"
                 )
 
