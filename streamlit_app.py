@@ -1,6 +1,6 @@
 """
-Streamlit Application for Indian Stock Screening
-ML-powered stock screener using LightGBM to predict return direction
+Enhanced Streamlit Application for Indian Stock Screening
+ML-powered stock screener using LightGBM with comprehensive model analysis
 """
 import streamlit as st
 import pandas as pd
@@ -37,6 +37,27 @@ st.markdown("""
         border-radius: 0.5rem;
         margin: 0.5rem 0;
     }
+    .model-info-box {
+        background-color: #e8f4f8;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #1f77b4;
+        margin: 1rem 0;
+    }
+    .status-success {
+        background-color: #d4edda;
+        color: #155724;
+        padding: 0.75rem;
+        border-radius: 0.3rem;
+        border-left: 4px solid #28a745;
+    }
+    .status-warning {
+        background-color: #fff3cd;
+        color: #856404;
+        padding: 0.75rem;
+        border-radius: 0.3rem;
+        border-left: 4px solid #ffc107;
+    }
     .quintile-q5 {
         background-color: #d4edda;
         padding: 0.5rem;
@@ -56,8 +77,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-class StreamlitStockScreener:
-    """Main application class"""
+class EnhancedStockScreener:
+    """Enhanced application class with model persistence and detailed analysis"""
 
     def __init__(self):
         self.data_file = 'stock_data_cache.pkl'
@@ -68,9 +89,7 @@ class StreamlitStockScreener:
         """Load stock tickers from NSE_Universe.csv"""
         try:
             df = pd.read_csv('NSE_Universe.csv')
-            # Get tickers and add .NS suffix for NSE stocks
             tickers = df['Ticker'].dropna().unique().tolist()
-            # Add .NS suffix if not already present
             tickers = [t if t.endswith('.NS') else f"{t}.NS" for t in tickers]
             return tickers
         except Exception as e:
@@ -87,9 +106,42 @@ class StreamlitStockScreener:
             st.error(f"Error loading backup tickers: {str(e)}")
             return []
 
+    def display_model_info_box(self, model: ReturnDirectionModel):
+        """Display model information in a highlighted box"""
+        if not model.model_metadata:
+            st.warning("Model metadata not available")
+            return
+
+        meta = model.model_metadata
+        st.markdown('<div class="model-info-box">', unsafe_allow_html=True)
+        st.markdown("### 🤖 Current Model Information")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("**Training Date:**")
+            st.markdown(f"🕐 {meta.get('trained_at', 'Unknown')}")
+            st.markdown("**Data Range:**")
+            st.markdown(f"📅 {meta.get('data_date_range', 'Unknown')}")
+
+        with col2:
+            st.markdown("**Training Data:**")
+            st.markdown(f"📊 {meta.get('n_stocks', 'Unknown')} stocks")
+            st.markdown(f"📈 {meta.get('n_training_samples', 0):,} training samples")
+            st.markdown(f"📉 {meta.get('n_test_samples', 0):,} test samples")
+
+        with col3:
+            metrics = meta.get('metrics', {})
+            st.markdown("**Performance:**")
+            st.markdown(f"✅ Accuracy: {metrics.get('accuracy', 0):.2%}")
+            st.markdown(f"🎯 ROC AUC: {metrics.get('roc_auc', 0):.3f}")
+            st.markdown(f"⚙️ Features: {meta.get('n_features', 'Unknown')}")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
     def data_collection_page(self):
-        """Page for collecting data"""
-        st.markdown('<div class="main-header">Step 1: Data Collection</div>', unsafe_allow_html=True)
+        """Enhanced page for collecting data with progress indicators"""
+        st.markdown('<div class="main-header">📊 Step 1: Data Collection</div>', unsafe_allow_html=True)
 
         st.write("""
         This step fetches historical price data and fundamental information from Yahoo Finance.
@@ -112,8 +164,8 @@ class StreamlitStockScreener:
                 "Maximum number of stocks to process",
                 min_value=10,
                 max_value=2000,
-                value=200,
-                help="Start with 200 for testing. Use 1500+ for full universe"
+                value=500,
+                help="Recommended: 500 stocks for robust analysis"
             )
 
         use_cached = st.checkbox("Use cached data if available", value=True)
@@ -121,7 +173,7 @@ class StreamlitStockScreener:
         if st.button("Start Data Collection", type="primary"):
             # Check if cached data exists
             if use_cached and os.path.exists(self.data_file):
-                st.info("Loading cached data...")
+                st.markdown('<div class="status-success">✅ Loading cached data...</div>', unsafe_allow_html=True)
                 with open(self.data_file, 'rb') as f:
                     data = pickle.load(f)
                 st.session_state['data'] = data
@@ -130,30 +182,34 @@ class StreamlitStockScreener:
                 return
 
             # Load tickers
-            with st.spinner("Loading stock universe..."):
-                tickers = self.load_universe_tickers()
+            status_placeholder = st.empty()
+            progress_bar = st.progress(0)
 
-                if not tickers:
-                    tickers = self.load_backup_tickers()
+            with status_placeholder.container():
+                st.info("🔍 Loading stock universe...")
 
-                if not tickers:
-                    st.error("Failed to load stock tickers!")
-                    return
+            tickers = self.load_universe_tickers()
 
-                st.info(f"Found {len(tickers)} tickers in universe")
+            if not tickers:
+                tickers = self.load_backup_tickers()
 
-                # Limit number of stocks
-                tickers = tickers[:max_stocks]
+            if not tickers:
+                st.error("Failed to load stock tickers!")
+                return
 
-            # Collect data
-            with st.spinner(f"Collecting data for {len(tickers)} stocks... This may take a while."):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+            progress_bar.progress(10)
+            status_placeholder.info(f"✅ Found {len(tickers)} tickers in universe")
 
-                # Use a simpler approach for progress tracking
-                data = collect_data_for_universe(tickers, lookback_years=lookback_years)
+            # Limit number of stocks
+            tickers = tickers[:max_stocks]
 
-                progress_bar.progress(100)
+            # Collect data with progress updates
+            status_placeholder.info(f"📥 Collecting data for {len(tickers)} stocks... This may take 15-30 minutes...")
+            progress_bar.progress(20)
+
+            data = collect_data_for_universe(tickers, lookback_years=lookback_years)
+
+            progress_bar.progress(90)
 
             if data.empty:
                 st.error("Failed to collect data!")
@@ -163,10 +219,13 @@ class StreamlitStockScreener:
             with open(self.data_file, 'wb') as f:
                 pickle.dump(data, f)
 
+            progress_bar.progress(100)
+            status_placeholder.markdown('<div class="status-success">✅ Data collection complete!</div>', unsafe_allow_html=True)
+
             st.session_state['data'] = data
 
             st.success(f"Successfully collected data for {data['Ticker'].nunique()} stocks!")
-            st.write(f"Total records: {len(data)}")
+            st.write(f"Total records: {len(data):,}")
             st.write(f"Date range: {data['Date'].min()} to {data['Date'].max()}")
 
             # Show sample
@@ -175,26 +234,37 @@ class StreamlitStockScreener:
 
             # Show statistics
             st.subheader("Data Statistics")
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Total Stocks", data['Ticker'].nunique())
             with col2:
-                st.metric("Total Records", len(data))
+                st.metric("Total Records", f"{len(data):,}")
             with col3:
                 st.metric("Features", len(data.columns))
+            with col4:
+                avg_months = len(data) / data['Ticker'].nunique()
+                st.metric("Avg Months/Stock", f"{avg_months:.0f}")
 
     def model_training_page(self):
-        """Page for training the model"""
-        st.markdown('<div class="main-header">Step 2: Model Training</div>', unsafe_allow_html=True)
+        """Enhanced page for training the model with detailed metrics"""
+        st.markdown('<div class="main-header">🤖 Step 2: Model Training</div>', unsafe_allow_html=True)
 
         if 'data' not in st.session_state:
-            st.warning("Please collect data first (Step 1)")
-            return
+            # Try to load cached data
+            if os.path.exists(self.data_file):
+                with st.spinner("Loading cached data..."):
+                    with open(self.data_file, 'rb') as f:
+                        data = pickle.load(f)
+                    st.session_state['data'] = data
+                    st.success(f"Loaded cached data: {len(data):,} records")
+            else:
+                st.warning("⚠️ Please collect data first (Step 1)")
+                return
 
         data = st.session_state['data']
 
         st.write(f"""
-        Training LightGBM model on {len(data)} records from {data['Ticker'].nunique()} stocks.
+        Training LightGBM model on **{len(data):,}** records from **{data['Ticker'].nunique()}** stocks.
         The model will predict the direction of next month's returns.
         """)
 
@@ -216,22 +286,39 @@ class StreamlitStockScreener:
             )
 
         if st.button("Train Model", type="primary"):
-            with st.spinner("Training LightGBM model..."):
-                # Initialize model
-                model = ReturnDirectionModel(test_size=test_size)
+            status_placeholder = st.empty()
+            progress_bar = st.progress(0)
 
-                # Train
-                metrics = model.train_model(data, use_time_series_split=use_time_series_split)
+            status_placeholder.info("⚙️ Initializing LightGBM model...")
+            progress_bar.progress(10)
 
-                # Save model
-                model.save_model(self.model_file)
-                st.session_state['model'] = model
+            # Initialize model
+            model = ReturnDirectionModel(test_size=test_size)
 
-            # Display results
-            st.success("Model training complete!")
+            status_placeholder.info("🔄 Training model... This may take 1-2 minutes...")
+            progress_bar.progress(30)
+
+            # Train
+            metrics = model.train_model(data, use_time_series_split=use_time_series_split)
+
+            progress_bar.progress(80)
+            status_placeholder.info("💾 Saving model...")
+
+            # Save model
+            model.save_model(self.model_file)
+            st.session_state['model'] = model
+
+            progress_bar.progress(100)
+            status_placeholder.markdown('<div class="status-success">✅ Model training complete!</div>', unsafe_allow_html=True)
+
+            # Display comprehensive results
+            st.success("🎉 Model training complete!")
+
+            # Show model info box
+            self.display_model_info_box(model)
 
             # Metrics
-            st.subheader("Model Performance")
+            st.subheader("📊 Model Performance Metrics")
             col1, col2, col3, col4, col5 = st.columns(5)
 
             with col1:
@@ -246,7 +333,7 @@ class StreamlitStockScreener:
                 st.metric("ROC AUC", f"{metrics['roc_auc']:.3f}")
 
             # Confusion matrix
-            st.subheader("Confusion Matrix")
+            st.subheader("🎯 Confusion Matrix")
             cm = metrics['confusion_matrix']
             fig = go.Figure(data=go.Heatmap(
                 z=cm,
@@ -260,12 +347,15 @@ class StreamlitStockScreener:
             fig.update_layout(
                 title="Confusion Matrix",
                 xaxis_title="Predicted",
-                yaxis_title="Actual"
+                yaxis_title="Actual",
+                height=400
             )
             st.plotly_chart(fig, use_container_width=True)
 
             # Feature importance
-            st.subheader("Top 20 Most Important Features")
+            st.subheader("⭐ Top 20 Most Important Features")
+            st.write("These features have the strongest influence on predicting return direction:")
+
             feature_imp = model.get_feature_importance(top_n=20)
 
             fig = px.bar(
@@ -273,58 +363,103 @@ class StreamlitStockScreener:
                 x='importance',
                 y='feature',
                 orientation='h',
-                title="Feature Importance (Gain)"
+                title="Feature Importance (Gain)",
+                color='importance',
+                color_continuous_scale='Blues'
             )
-            fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+            fig.update_layout(
+                yaxis={'categoryorder': 'total ascending'},
+                height=600
+            )
             st.plotly_chart(fig, use_container_width=True)
 
+            # Show top features as metrics
+            st.subheader("🔝 Top 10 Features Breakdown")
+            top_10 = feature_imp.head(10)
+            cols = st.columns(5)
+            for idx, (i, row) in enumerate(top_10.iterrows()):
+                with cols[idx % 5]:
+                    st.metric(
+                        f"#{idx+1} {row['feature'][:15]}...",
+                        f"{row['importance']:.0f}",
+                        help=f"Full name: {row['feature']}"
+                    )
+
     def stock_screening_page(self):
-        """Page for screening stocks"""
-        st.markdown('<div class="main-header">Step 3: Stock Screening</div>', unsafe_allow_html=True)
+        """Enhanced page for screening stocks with model info and per-stock analysis"""
+        st.markdown('<div class="main-header">🔍 Step 3: Stock Screening & Analysis</div>', unsafe_allow_html=True)
 
         # Load model and data
         if 'model' not in st.session_state:
             if os.path.exists(self.model_file):
-                st.info("Loading saved model...")
-                model = ReturnDirectionModel()
-                model.load_model(self.model_file)
-                st.session_state['model'] = model
+                with st.spinner("Loading saved model..."):
+                    model = ReturnDirectionModel()
+                    model.load_model(self.model_file)
+                    st.session_state['model'] = model
+                    st.success("✅ Model loaded from disk")
             else:
-                st.warning("Please train the model first (Step 2)")
+                st.warning("⚠️ Please train the model first (Step 2)")
                 return
+        else:
+            model = st.session_state['model']
+
+        # Display model info
+        self.display_model_info_box(model)
+
+        # Check if model needs retraining
+        if model.model_metadata:
+            trained_date = model.model_metadata.get('trained_at', 'Unknown')
+            try:
+                trained_datetime = datetime.strptime(trained_date, '%Y-%m-%d %H:%M:%S')
+                days_old = (datetime.now() - trained_datetime).days
+                if days_old > 30:
+                    st.markdown(f'<div class="status-warning">⚠️ Model was trained {days_old} days ago. Consider retraining with fresh data.</div>', unsafe_allow_html=True)
+            except:
+                pass
 
         if 'data' not in st.session_state:
             if os.path.exists(self.data_file):
-                st.info("Loading cached data...")
-                with open(self.data_file, 'rb') as f:
-                    data = pickle.load(f)
-                st.session_state['data'] = data
+                with st.spinner("Loading cached data..."):
+                    with open(self.data_file, 'rb') as f:
+                        data = pickle.load(f)
+                    st.session_state['data'] = data
             else:
-                st.warning("Please collect data first (Step 1)")
+                st.warning("⚠️ Please collect data first (Step 1)")
                 return
 
-        model = st.session_state['model']
         data = st.session_state['data']
 
         st.write("""
         This page scores all stocks based on their characteristics and assigns them to quality quintiles.
+        Higher quintiles (Q4, Q5) indicate stocks predicted to have positive returns.
         """)
 
         if st.button("Run Screening", type="primary"):
-            with st.spinner("Scoring stocks..."):
-                # Initialize scorer
-                scorer = StockScorer(model)
+            status_placeholder = st.empty()
+            progress_bar = st.progress(0)
 
-                # Score universe
-                results = scorer.score_current_universe(data)
+            status_placeholder.info("📊 Scoring stocks...")
+            progress_bar.progress(20)
 
-                # Save results
-                with open(self.results_file, 'wb') as f:
-                    pickle.dump(results, f)
+            # Initialize scorer
+            scorer = StockScorer(model)
 
-                st.session_state['results'] = results
+            # Score universe
+            results = scorer.score_current_universe(data)
 
-            st.success(f"Screening complete! Analyzed {len(results)} stocks.")
+            progress_bar.progress(80)
+            status_placeholder.info("💾 Saving results...")
+
+            # Save results
+            with open(self.results_file, 'wb') as f:
+                pickle.dump(results, f)
+
+            st.session_state['results'] = results
+
+            progress_bar.progress(100)
+            status_placeholder.markdown('<div class="status-success">✅ Screening complete!</div>', unsafe_allow_html=True)
+
+            st.success(f"Analyzed {len(results)} stocks.")
 
         # Display results if available
         if 'results' in st.session_state or os.path.exists(self.results_file):
@@ -336,156 +471,186 @@ class StreamlitStockScreener:
                 results = st.session_state['results']
 
             # Filter options
-            st.subheader("Filter Results")
+            st.subheader("🔎 Filter Results")
             col1, col2, col3 = st.columns(3)
 
             with col1:
                 quintile_filter = st.multiselect(
                     "Quality Quintile",
-                    options=results['quality_quintile'].unique().tolist(),
-                    default=results['quality_quintile'].unique().tolist()
+                    options=sorted(results['quality_quintile'].unique().tolist(), reverse=True),
+                    default=['Q5', 'Q4'],
+                    help="Q5 = Highest quality, Q1 = Lowest quality"
                 )
 
             with col2:
-                min_score = st.slider(
-                    "Minimum Composite Score",
+                min_probability = st.slider(
+                    "Minimum Probability",
                     min_value=0.0,
-                    max_value=100.0,
-                    value=0.0
+                    max_value=1.0,
+                    value=0.5,
+                    step=0.05,
+                    help="Minimum predicted probability of positive returns"
                 )
 
             with col3:
-                min_prob = st.slider(
-                    "Minimum Return Probability",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.0,
-                    step=0.05
+                sort_by = st.selectbox(
+                    "Sort By",
+                    options=['predicted_probability', 'composite_score', 'Ticker'],
+                    index=0
                 )
 
             # Apply filters
-            filtered_results = results[
+            filtered = results[
                 (results['quality_quintile'].isin(quintile_filter)) &
-                (results['composite_score'] >= min_score) &
-                (results['return_probability'] >= min_prob)
-            ].copy()
+                (results['predicted_probability'] >= min_probability)
+            ].sort_values(sort_by, ascending=False)
 
-            # Sort by composite score
-            filtered_results = filtered_results.sort_values('composite_score', ascending=False)
+            st.write(f"**{len(filtered)}** stocks match your criteria")
 
-            # Display summary
-            st.subheader("Screening Results")
-            col1, col2, col3, col4 = st.columns(4)
+            # Display filtered results
+            st.subheader("📋 Screening Results")
 
-            with col1:
-                st.metric("Total Stocks", len(filtered_results))
-            with col2:
-                q5_count = len(filtered_results[filtered_results['quality_quintile'] == 'Q5 (Highest)'])
-                st.metric("Q5 (Highest Quality)", q5_count)
-            with col3:
-                avg_score = filtered_results['composite_score'].mean()
-                st.metric("Avg Composite Score", f"{avg_score:.1f}")
-            with col4:
-                avg_prob = filtered_results['return_probability'].mean()
-                st.metric("Avg Return Probability", f"{avg_prob:.2%}")
+            # Format display columns
+            display_cols = ['Ticker', 'predicted_probability', 'quality_quintile', 'composite_score']
+            if all(col in filtered.columns for col in display_cols):
+                display_df = filtered[display_cols].copy()
+                display_df['predicted_probability'] = display_df['predicted_probability'].apply(lambda x: f"{x:.1%}")
+                display_df['composite_score'] = display_df['composite_score'].apply(lambda x: f"{x:.2f}")
+
+                st.dataframe(
+                    display_df,
+                    use_container_width=True,
+                    height=400
+                )
+
+            # Download button
+            csv = filtered.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Results as CSV",
+                data=csv,
+                file_name=f"stock_screening_results_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                type="primary"
+            )
+
+            # Per-stock analysis
+            st.subheader("🔬 Detailed Stock Analysis")
+            st.write("Select a stock to see how the model made its prediction:")
+
+            selected_ticker = st.selectbox(
+                "Select Stock",
+                options=filtered['Ticker'].tolist(),
+                index=0 if len(filtered) > 0 else None
+            )
+
+            if selected_ticker and st.button("Analyze Selected Stock"):
+                with st.spinner(f"Analyzing {selected_ticker}..."):
+                    try:
+                        contrib_df, pred_proba = model.explain_prediction(data, ticker=selected_ticker)
+
+                        st.markdown(f"### 📊 Prediction Analysis for {selected_ticker}")
+                        st.metric("Predicted Probability", f"{pred_proba:.1%}",
+                                 help="Probability of positive returns next month")
+
+                        st.write("**Top 15 Contributing Features:**")
+                        st.write("These features had the strongest influence on this stock's prediction")
+
+                        top_contrib = contrib_df.head(15)
+
+                        fig = px.bar(
+                            top_contrib,
+                            x='contribution',
+                            y='feature',
+                            orientation='h',
+                            title=f"Feature Contributions for {selected_ticker}",
+                            color='contribution',
+                            color_continuous_scale='RdYlGn'
+                        )
+                        fig.update_layout(
+                            yaxis={'categoryorder': 'total ascending'},
+                            height=500
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # Show detailed table
+                        with st.expander("📊 View Detailed Feature Values"):
+                            display_contrib = top_contrib[['feature', 'value', 'importance', 'contribution']].copy()
+                            display_contrib['value'] = display_contrib['value'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                            display_contrib['importance'] = display_contrib['importance'].apply(lambda x: f"{x:.0f}")
+                            display_contrib['contribution'] = display_contrib['contribution'].apply(lambda x: f"{x:.2f}")
+                            st.dataframe(display_contrib, use_container_width=True)
+
+                    except Exception as e:
+                        st.error(f"Error analyzing stock: {str(e)}")
 
             # Quintile distribution
-            st.subheader("Distribution by Quintile")
-            quintile_counts = filtered_results['quality_quintile'].value_counts().sort_index()
+            st.subheader("📊 Quintile Distribution")
+            quintile_counts = results['quality_quintile'].value_counts().sort_index(ascending=False)
+
             fig = px.bar(
                 x=quintile_counts.index,
                 y=quintile_counts.values,
                 labels={'x': 'Quality Quintile', 'y': 'Number of Stocks'},
-                title="Stock Distribution by Quality Quintile"
+                title="Distribution of Stocks by Quality Quintile",
+                color=quintile_counts.values,
+                color_continuous_scale='Blues'
             )
             st.plotly_chart(fig, use_container_width=True)
 
-            # Display table
-            st.subheader("Stock Rankings")
-
-            # Select columns to display
-            display_cols = [
-                'Ticker', 'quality_quintile', 'composite_score', 'return_probability',
-                'trailing_pe', 'price_to_book', 'roe', 'revenue_growth',
-                'debt_to_equity', 'dividend_yield', 'beta', 'ROC_12M'
-            ]
-
-            # Filter to existing columns
-            display_cols = [col for col in display_cols if col in filtered_results.columns]
-
-            display_df = filtered_results[display_cols].copy()
-
-            # Format numeric columns
-            format_dict = {
-                'composite_score': '{:.1f}',
-                'return_probability': '{:.2%}',
-                'trailing_pe': '{:.2f}',
-                'price_to_book': '{:.2f}',
-                'roe': '{:.2%}',
-                'revenue_growth': '{:.2%}',
-                'debt_to_equity': '{:.2f}',
-                'dividend_yield': '{:.2%}',
-                'beta': '{:.2f}',
-                'ROC_12M': '{:.2%}'
-            }
-
-            # Apply formatting
-            for col, fmt in format_dict.items():
-                if col in display_df.columns:
-                    if '%' in fmt:
-                        display_df[col] = display_df[col].apply(lambda x: f"{x*100:.2f}%" if pd.notna(x) else "N/A")
-                    else:
-                        display_df[col] = display_df[col].apply(lambda x: fmt.format(x) if pd.notna(x) else "N/A")
-
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                height=600
-            )
-
-            # Download button
-            csv = filtered_results.to_csv(index=False)
-            st.download_button(
-                label="Download Results as CSV",
-                data=csv,
-                file_name=f"stock_screening_results_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-
     def run(self):
-        """Main application runner"""
-        st.sidebar.title("Navigation")
+        """Run the application"""
+        st.sidebar.title("📈 Stock Screener Navigation")
+
         page = st.sidebar.radio(
-            "Select Page",
-            ["Data Collection", "Model Training", "Stock Screening"]
+            "Choose a step:",
+            ["📊 Data Collection", "🤖 Model Training", "🔍 Stock Screening"]
         )
 
+        if page == "📊 Data Collection":
+            self.data_collection_page()
+        elif page == "🤖 Model Training":
+            self.model_training_page()
+        elif page == "🔍 Stock Screening":
+            self.stock_screening_page()
+
+        # Sidebar info
         st.sidebar.markdown("---")
-        st.sidebar.subheader("About")
+        st.sidebar.markdown("### ℹ️ About")
         st.sidebar.info("""
-        This application uses machine learning (LightGBM) to screen Indian stocks.
+        This application uses LightGBM to predict stock return direction based on:
+        - 🔢 Fundamental metrics (80% weight)
+        - 📈 Technical indicators (20% weight)
 
-        **Process:**
-        1. Collect historical data
-        2. Train model to predict return direction
-        3. Score stocks and assign quality quintiles
-
-        **Features:**
-        - Technical indicators (RSI, MACD, etc.)
-        - Fundamental metrics (P/E, ROE, etc.)
-        - Momentum factors
-        - Risk metrics
+        Model predictions help identify high-quality stocks for further research.
         """)
 
-        # Route to appropriate page
-        if page == "Data Collection":
-            self.data_collection_page()
-        elif page == "Model Training":
-            self.model_training_page()
-        elif page == "Stock Screening":
-            self.stock_screening_page()
+        # Show current status
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 📊 Current Status")
+
+        if os.path.exists(self.data_file):
+            st.sidebar.success("✅ Data collected")
+        else:
+            st.sidebar.warning("⚠️ No data collected")
+
+        if os.path.exists(self.model_file):
+            try:
+                model = ReturnDirectionModel()
+                model.load_model(self.model_file)
+                meta = model.model_metadata
+                trained_date = meta.get('trained_at', 'Unknown')
+                st.sidebar.success(f"✅ Model trained\n\n📅 {trained_date}")
+            except:
+                st.sidebar.success("✅ Model file exists")
+        else:
+            st.sidebar.warning("⚠️ No trained model")
+
+        if os.path.exists(self.results_file):
+            st.sidebar.success("✅ Screening results available")
+        else:
+            st.sidebar.warning("⚠️ No screening results")
 
 
 if __name__ == "__main__":
-    app = StreamlitStockScreener()
+    app = EnhancedStockScreener()
     app.run()
