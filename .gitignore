@@ -42,6 +42,7 @@ ENV/
 stock_data_cache.pkl
 # trained_model.pkl  # ALLOW THIS - We want to commit the trained model!
 screening_results.pkl
+screening_data_cache.pkl  # Cache for screening universe data
 selected_stocks_cache.csv
 data_availability_check.csv
 
