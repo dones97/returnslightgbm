@@ -442,9 +442,11 @@ class EnhancedStockDataCollector:
 
         # FINAL SAFETY CHECK: Ensure no datetime objects in numeric columns
         # This catches any edge cases where datetime might have slipped through
+        # Force convert ALL columns to numeric (except Date and Ticker)
         for col in monthly_data.columns:
-            if col not in ['Date', 'Ticker'] and monthly_data[col].dtype == 'object':
-                # Try to convert object columns to numeric
+            if col not in ['Date', 'Ticker']:
+                # Force convert to numeric, regardless of current dtype
+                # This handles: object, datetime64, or any mixed types
                 monthly_data[col] = pd.to_numeric(monthly_data[col], errors='coerce')
 
         return monthly_data
@@ -473,5 +475,19 @@ def collect_data_for_universe(tickers: List[str], lookback_years: int = 5) -> pd
     combined_df = pd.concat(all_data, axis=0)
     combined_df.reset_index(inplace=True)
     combined_df.rename(columns={'index': 'Date'}, inplace=True)
+
+    # Ensure Date column is properly formatted and timezone-naive
+    if 'Date' in combined_df.columns:
+        combined_df['Date'] = pd.to_datetime(combined_df['Date'])
+        if hasattr(combined_df['Date'].dtype, 'tz') and combined_df['Date'].dtype.tz is not None:
+            combined_df['Date'] = combined_df['Date'].dt.tz_localize(None)
+
+    # CRITICAL: One final aggressive type conversion on the combined dataset
+    # This ensures absolutely no datetime objects remain in numeric columns
+    print("\n🔧 Final data type cleanup...")
+    for col in combined_df.columns:
+        if col not in ['Date', 'Ticker']:
+            combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce')
+    print("✅ Data types verified")
 
     return combined_df
