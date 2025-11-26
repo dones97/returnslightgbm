@@ -36,7 +36,7 @@ jobs:
           echo "[OK] Found screener database"
           ls -lh screener_data.db
 
-      - name: Train model
+      - name: Train model (fundamentals + technical indicators)
         run: python model_trainer_screener.py
 
       - name: Upload model as artifact
@@ -57,9 +57,10 @@ jobs:
 
           # Commit if there are changes
           git diff --quiet && git diff --staged --quiet || (
-            git commit -m "Auto: Update trained model - Screener.in DB ($(date +'%Y-%m-%d'))" \
-                       -m "Model trained using screener.in fundamental data" \
-                       -m "500 random stocks, 10 quarters of data"
+            git commit -m "Auto: Update trained model - Full Features ($(date +'%Y-%m-%d'))" \
+                       -m "Model trained using fundamentals + price-based technical indicators" \
+                       -m "Features: ROC, RSI, volatility, MA ratios + all fundamentals" \
+                       -m "Target: Next quarter price returns - 500 stocks, 10 quarters"
 
             # Pull with rebase to avoid conflicts
             git pull --rebase origin main
