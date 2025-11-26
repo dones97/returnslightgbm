@@ -597,17 +597,53 @@ class EnhancedStockScreener:
             # Display filtered results
             st.subheader("📋 Screening Results")
 
-            # Format display columns
-            display_cols = ['Ticker', 'predicted_probability', 'quality_quintile', 'composite_score']
-            if all(col in filtered.columns for col in display_cols):
-                display_df = filtered[display_cols].copy()
-                display_df['predicted_probability'] = display_df['predicted_probability'].apply(lambda x: f"{x:.1%}")
-                display_df['composite_score'] = display_df['composite_score'].apply(lambda x: f"{x:.2f}")
+            # Add more columns for comprehensive view
+            display_cols = [
+                'Ticker', 'quality_quintile', 'composite_score', 'predicted_probability',
+                'trailing_pe', 'price_to_book', 'roe', 'revenue_growth',
+                'debt_to_equity', 'dividend_yield', 'ROC_12M', 'RSI'
+            ]
+
+            # Filter to only columns that exist
+            available_cols = [col for col in display_cols if col in filtered.columns]
+
+            if len(available_cols) > 0:
+                display_df = filtered[available_cols].copy()
+
+                # Format numeric columns for display
+                format_dict = {}
+                if 'predicted_probability' in display_df.columns:
+                    display_df['Probability'] = display_df['predicted_probability'].apply(lambda x: f"{x:.1%}")
+                    format_dict['Probability'] = 'string'
+                if 'composite_score' in display_df.columns:
+                    display_df['Score'] = display_df['composite_score'].apply(lambda x: f"{x:.1f}")
+                    format_dict['Score'] = 'string'
+                if 'trailing_pe' in display_df.columns:
+                    display_df['P/E'] = display_df['trailing_pe'].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
+                if 'roe' in display_df.columns:
+                    display_df['ROE'] = display_df['roe'].apply(lambda x: f"{x:.1%}" if pd.notna(x) else "N/A")
+                if 'revenue_growth' in display_df.columns:
+                    display_df['Rev Growth'] = display_df['revenue_growth'].apply(lambda x: f"{x:.1%}" if pd.notna(x) else "N/A")
+
+                # Reorder with formatted columns
+                display_order = ['Ticker', 'quality_quintile', 'Score', 'Probability']
+                if 'P/E' in display_df.columns:
+                    display_order.append('P/E')
+                if 'ROE' in display_df.columns:
+                    display_order.append('ROE')
+                if 'Rev Growth' in display_df.columns:
+                    display_order.append('Rev Growth')
+
+                # Use only columns that exist
+                display_order = [col for col in display_order if col in display_df.columns]
+
+                st.info(f"💡 **Tip:** Composite Score is calculated from all fundamental metrics. Higher score = Better quality stock.")
 
                 st.dataframe(
-                    display_df,
+                    display_df[display_order],
                     use_container_width=True,
-                    height=400
+                    height=400,
+                    hide_index=True
                 )
 
             # Download button
@@ -620,55 +656,166 @@ class EnhancedStockScreener:
                 type="primary"
             )
 
-            # Per-stock analysis
-            st.subheader("🔬 Detailed Stock Analysis")
-            st.write("Select a stock to see how the model made its prediction:")
+            # Per-stock deep dive analysis
+            st.subheader("🔬 Deep Dive Stock Analysis")
+            st.write("Select any stock for comprehensive analysis:")
 
-            selected_ticker = st.selectbox(
-                "Select Stock",
-                options=filtered['Ticker'].tolist(),
-                index=0 if len(filtered) > 0 else None
-            )
+            col_select, col_button = st.columns([3, 1])
+            with col_select:
+                selected_ticker = st.selectbox(
+                    "Select Stock for Deep Dive",
+                    options=filtered['Ticker'].tolist(),
+                    index=0 if len(filtered) > 0 else None
+                )
 
-            if selected_ticker and st.button("Analyze Selected Stock"):
-                with st.spinner(f"Analyzing {selected_ticker}..."):
+            with col_button:
+                st.write("")  # Spacing
+                analyze_button = st.button("🔍 Analyze", type="primary")
+
+            if selected_ticker and analyze_button:
+                with st.spinner(f"Performing deep dive on {selected_ticker}..."):
                     try:
-                        contrib_df, pred_proba = model.explain_prediction(data, ticker=selected_ticker)
+                        # Get stock data
+                        stock_data = filtered[filtered['Ticker'] == selected_ticker].iloc[0]
 
-                        st.markdown(f"### 📊 Prediction Analysis for {selected_ticker}")
-                        st.metric("Predicted Probability", f"{pred_proba:.1%}",
-                                 help="Probability of positive returns next month")
+                        st.markdown(f"## 📈 {selected_ticker.replace('.NS', '')} - Complete Analysis")
 
-                        st.write("**Top 15 Contributing Features:**")
-                        st.write("These features had the strongest influence on this stock's prediction")
+                        # Key metrics at top
+                        metric_cols = st.columns(5)
+                        with metric_cols[0]:
+                            st.metric("Quintile", stock_data['quality_quintile'])
+                        with metric_cols[1]:
+                            st.metric("Composite Score", f"{stock_data['composite_score']:.1f}")
+                        with metric_cols[2]:
+                            st.metric("Probability", f"{stock_data['predicted_probability']:.1%}")
+                        with metric_cols[3]:
+                            if 'trailing_pe' in stock_data and pd.notna(stock_data['trailing_pe']):
+                                st.metric("P/E Ratio", f"{stock_data['trailing_pe']:.1f}")
+                        with metric_cols[4]:
+                            if 'roe' in stock_data and pd.notna(stock_data['roe']):
+                                st.metric("ROE", f"{stock_data['roe']:.1%}")
 
-                        top_contrib = contrib_df.head(15)
+                        st.markdown("---")
+
+                        # Three column layout for comprehensive info
+                        col1, col2, col3 = st.columns(3)
+
+                        # Column 1: Valuation Metrics
+                        with col1:
+                            st.markdown("### 💰 Valuation")
+                            valuation_metrics = {}
+                            if 'trailing_pe' in stock_data:
+                                valuation_metrics['P/E Ratio'] = f"{stock_data['trailing_pe']:.2f}" if pd.notna(stock_data['trailing_pe']) else "N/A"
+                            if 'forward_pe' in stock_data:
+                                valuation_metrics['Forward P/E'] = f"{stock_data['forward_pe']:.2f}" if pd.notna(stock_data['forward_pe']) else "N/A"
+                            if 'price_to_book' in stock_data:
+                                valuation_metrics['P/B Ratio'] = f"{stock_data['price_to_book']:.2f}" if pd.notna(stock_data['price_to_book']) else "N/A"
+                            if 'enterprise_to_ebitda' in stock_data:
+                                valuation_metrics['EV/EBITDA'] = f"{stock_data['enterprise_to_ebitda']:.2f}" if pd.notna(stock_data['enterprise_to_ebitda']) else "N/A"
+                            if 'dividend_yield' in stock_data:
+                                valuation_metrics['Dividend Yield'] = f"{stock_data['dividend_yield']:.2%}" if pd.notna(stock_data['dividend_yield']) else "N/A"
+
+                            for metric, value in valuation_metrics.items():
+                                st.text(f"{metric}: {value}")
+
+                        # Column 2: Profitability & Growth
+                        with col2:
+                            st.markdown("### 📊 Profitability & Growth")
+                            profitability_metrics = {}
+                            if 'roe' in stock_data:
+                                profitability_metrics['ROE'] = f"{stock_data['roe']:.2%}" if pd.notna(stock_data['roe']) else "N/A"
+                            if 'roa' in stock_data:
+                                profitability_metrics['ROA'] = f"{stock_data['roa']:.2%}" if pd.notna(stock_data['roa']) else "N/A"
+                            if 'profit_margin' in stock_data:
+                                profitability_metrics['Profit Margin'] = f"{stock_data['profit_margin']:.2%}" if pd.notna(stock_data['profit_margin']) else "N/A"
+                            if 'revenue_growth' in stock_data:
+                                profitability_metrics['Revenue Growth'] = f"{stock_data['revenue_growth']:.2%}" if pd.notna(stock_data['revenue_growth']) else "N/A"
+                            if 'earnings_growth' in stock_data:
+                                profitability_metrics['Earnings Growth'] = f"{stock_data['earnings_growth']:.2%}" if pd.notna(stock_data['earnings_growth']) else "N/A"
+
+                            for metric, value in profitability_metrics.items():
+                                st.text(f"{metric}: {value}")
+
+                        # Column 3: Risk & Technical
+                        with col3:
+                            st.markdown("### ⚠️ Risk & Technical")
+                            risk_metrics = {}
+                            if 'debt_to_equity' in stock_data:
+                                risk_metrics['Debt/Equity'] = f"{stock_data['debt_to_equity']:.2f}" if pd.notna(stock_data['debt_to_equity']) else "N/A"
+                            if 'current_ratio' in stock_data:
+                                risk_metrics['Current Ratio'] = f"{stock_data['current_ratio']:.2f}" if pd.notna(stock_data['current_ratio']) else "N/A"
+                            if 'beta' in stock_data:
+                                risk_metrics['Beta'] = f"{stock_data['beta']:.2f}" if pd.notna(stock_data['beta']) else "N/A"
+                            if 'ROC_12M' in stock_data:
+                                risk_metrics['12M Return'] = f"{stock_data['ROC_12M']:.2%}" if pd.notna(stock_data['ROC_12M']) else "N/A"
+                            if 'RSI' in stock_data:
+                                risk_metrics['RSI'] = f"{stock_data['RSI']:.1f}" if pd.notna(stock_data['RSI']) else "N/A"
+
+                            for metric, value in risk_metrics.items():
+                                st.text(f"{metric}: {value}")
+
+                        st.markdown("---")
+
+                        # Model prediction breakdown
+                        st.markdown("### 🤖 Model Prediction Breakdown")
+                        st.write("Understanding how the model arrived at its prediction:")
+
+                        contrib_df, pred_proba = model.explain_prediction(results, ticker=selected_ticker)
+
+                        # Show top positive and negative contributors
+                        col_pos, col_neg = st.columns(2)
+
+                        with col_pos:
+                            st.markdown("#### ✅ Top Positive Drivers")
+                            top_positive = contrib_df[contrib_df['contribution'] > 0].head(10)
+                            if len(top_positive) > 0:
+                                for idx, row in top_positive.iterrows():
+                                    st.text(f"• {row['feature']}: +{row['contribution']:.2f}")
+                            else:
+                                st.text("No strong positive drivers")
+
+                        with col_neg:
+                            st.markdown("#### ❌ Top Negative Drivers")
+                            top_negative = contrib_df[contrib_df['contribution'] < 0].head(10)
+                            if len(top_negative) > 0:
+                                for idx, row in top_negative.iterrows():
+                                    st.text(f"• {row['feature']}: {row['contribution']:.2f}")
+                            else:
+                                st.text("No strong negative drivers")
+
+                        # Feature contribution chart
+                        st.markdown("#### 📊 Feature Contribution Chart")
+                        top_contrib = contrib_df.head(20)
 
                         fig = px.bar(
                             top_contrib,
                             x='contribution',
                             y='feature',
                             orientation='h',
-                            title=f"Feature Contributions for {selected_ticker}",
+                            title=f"Top 20 Feature Contributions for {selected_ticker}",
                             color='contribution',
-                            color_continuous_scale='RdYlGn'
+                            color_continuous_scale='RdYlGn',
+                            labels={'contribution': 'Contribution Score', 'feature': 'Feature'}
                         )
                         fig.update_layout(
                             yaxis={'categoryorder': 'total ascending'},
-                            height=500
+                            height=600,
+                            showlegend=False
                         )
                         st.plotly_chart(fig, use_container_width=True)
 
-                        # Show detailed table
-                        with st.expander("📊 View Detailed Feature Values"):
-                            display_contrib = top_contrib[['feature', 'value', 'importance', 'contribution']].copy()
-                            display_contrib['value'] = display_contrib['value'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
-                            display_contrib['importance'] = display_contrib['importance'].apply(lambda x: f"{x:.0f}")
-                            display_contrib['contribution'] = display_contrib['contribution'].apply(lambda x: f"{x:.2f}")
-                            st.dataframe(display_contrib, use_container_width=True)
+                        # Detailed feature table
+                        with st.expander("📋 View All Feature Details"):
+                            display_contrib = contrib_df[['feature', 'value', 'importance', 'contribution']].copy()
+                            display_contrib.columns = ['Feature', 'Current Value', 'Model Importance', 'Contribution']
+                            display_contrib['Current Value'] = display_contrib['Current Value'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                            display_contrib['Model Importance'] = display_contrib['Model Importance'].apply(lambda x: f"{x:.0f}")
+                            display_contrib['Contribution'] = display_contrib['Contribution'].apply(lambda x: f"{x:.2f}")
+                            st.dataframe(display_contrib, use_container_width=True, height=400)
 
                     except Exception as e:
                         st.error(f"Error analyzing stock: {str(e)}")
+                        st.exception(e)
 
             # Quintile distribution
             st.subheader("📊 Quintile Distribution")
