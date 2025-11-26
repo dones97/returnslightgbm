@@ -21,7 +21,9 @@ from data_collector_enhanced import collect_data_for_universe
 def load_universe_tickers():
     """Load all tickers from NSE universe"""
     try:
-        df = pd.read_csv('NSE_Universe.csv')
+        # TEMPORARY: Use test file for faster debugging
+        # TODO: Change back to 'NSE_Universe.csv' after fixing the issue
+        df = pd.read_csv('NSE_Universe_test.csv')
         tickers = df['Ticker'].tolist()
         # Add .NS suffix if not present
         tickers = [t if t.endswith('.NS') else f"{t}.NS" for t in tickers]
@@ -70,6 +72,12 @@ def run_automated_screening():
     print("\n[2/4] Loading screening data...")
     screening_cache = 'screening_data_cache.pkl'
 
+    # TEMPORARY: Force fresh data collection for debugging
+    # TODO: Remove this line after fixing the issue
+    if os.path.exists(screening_cache):
+        print(f"⚠️  Deleting old cache to force fresh data collection for debugging...")
+        os.remove(screening_cache)
+
     if os.path.exists(screening_cache):
         print(f"✅ Using cached screening data: {screening_cache}")
         with open(screening_cache, 'rb') as f:
@@ -103,6 +111,18 @@ def run_automated_screening():
     # Step 3: Score all stocks
     print("\n[3/4] Scoring all stocks with trained model...")
     try:
+        # Debug: Check column types in screening_data
+        print(f"\nDEBUG: screening_data shape: {screening_data.shape}")
+        print(f"DEBUG: screening_data columns ({len(screening_data.columns)}): {screening_data.columns.tolist()}")
+        print(f"\nDEBUG: Column data types:")
+        for i, (col, dtype) in enumerate(screening_data.dtypes.items()):
+            print(f"  [{i}] {col}: {dtype}")
+            if pd.api.types.is_datetime64_any_dtype(dtype):
+                sample_val = screening_data[col].iloc[0] if len(screening_data) > 0 else None
+                print(f"      Sample value: {sample_val}, Type: {type(sample_val)}")
+                if hasattr(dtype, 'tz'):
+                    print(f"      Timezone: {dtype.tz}")
+
         scorer = StockScorer(model)
         results = scorer.score_current_universe(screening_data)
         print(f"✅ Scored {len(results)} stocks")
