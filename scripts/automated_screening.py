@@ -102,9 +102,17 @@ def run_automated_screening():
 
     # Step 3: Score all stocks
     print("\n[3/4] Scoring all stocks with trained model...")
-    scorer = StockScorer(model)
-    results = scorer.score_current_universe(screening_data)
-    print(f"✅ Scored {len(results)} stocks")
+    try:
+        scorer = StockScorer(model)
+        results = scorer.score_current_universe(screening_data)
+        print(f"✅ Scored {len(results)} stocks")
+    except Exception as e:
+        print(f"❌ ERROR: Failed to score stocks!")
+        print(f"   Error type: {type(e).__name__}")
+        print(f"   Error message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
 
     # Step 4: Save results
     print("\n[4/4] Saving results...")
