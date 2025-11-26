@@ -59,8 +59,12 @@ class ReturnDirectionModel:
             'Volume_SMA_20'  # Keep Volume_Ratio
         ]
 
-        # Get all numeric columns
+        # Get all numeric columns (this excludes datetime columns)
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+        # Also explicitly exclude any datetime columns
+        datetime_cols = df.select_dtypes(include=['datetime', 'datetime64']).columns.tolist()
+        exclude_cols.extend(datetime_cols)
 
         # Filter out excluded columns
         feature_cols = [col for col in numeric_cols if col not in exclude_cols]
@@ -217,6 +221,14 @@ class ReturnDirectionModel:
         """
         if self.model is None:
             raise ValueError("Model not trained yet. Call train_model() first.")
+
+        # Strip timezone from ALL datetime columns before processing
+        df = df.copy()
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = pd.to_datetime(df[col])
+                if hasattr(df[col].dtype, 'tz') and df[col].dtype.tz is not None:
+                    df[col] = df[col].dt.tz_localize(None)
 
         df_processed, _ = self.prepare_features(df)
         X = df_processed[self.feature_names]
