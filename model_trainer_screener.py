@@ -21,12 +21,13 @@ from typing import Tuple, List, Dict
 import random
 from data_collector_screener import ScreenerDataCollector
 from price_data_helper import PriceDataHelper
+from price_technical_indicators import TechnicalIndicators
 import warnings
 warnings.filterwarnings('ignore')
 
 
 class ScreenerModelTrainer:
-    """Train LightGBM model using screener.in database"""
+    """Train LightGBM model using screener.in database + price-based technical indicators"""
 
     def __init__(self, db_path: str = 'screener_data.db'):
         """
@@ -38,6 +39,7 @@ class ScreenerModelTrainer:
         self.db_path = db_path
         self.collector = ScreenerDataCollector(db_path)
         self.price_helper = PriceDataHelper()
+        self.technical_indicators = TechnicalIndicators()
         self.model = None
         self.feature_names = None
         self.feature_importance = None
@@ -87,8 +89,55 @@ class ScreenerModelTrainer:
         print(f"    Total quarters: {len(training_data)}")
         print(f"    Features: {len(training_data.columns)}")
 
+        # Add price-based technical indicators
+        print(f"\n[2] Adding price-based technical indicators (momentum, RSI, volatility)...")
+
+        unique_stocks = training_data['ticker'].unique()
+        print(f"    Total stocks to fetch price data for: {len(unique_stocks)}")
+
+        all_technical_indicators = []
+
+        for i, ticker in enumerate(unique_stocks, 1):
+            if i % 50 == 0:
+                print(f"    Processing {i}/{len(unique_stocks)}...")
+
+            try:
+                # Get this stock's data
+                stock_data = training_data[training_data['ticker'] == ticker].copy()
+
+                # Calculate technical indicators
+                indicators = self.technical_indicators.calculate_indicators(
+                    ticker, stock_data['quarter_date']
+                )
+
+                all_technical_indicators.append(indicators)
+
+            except Exception as e:
+                print(f"    [WARNING] Error calculating indicators for {ticker}: {str(e)}")
+                # Add empty indicators
+                empty_indicators = pd.DataFrame({
+                    'roc_1m': [np.nan] * len(stock_data),
+                    'roc_3m': [np.nan] * len(stock_data),
+                    'roc_6m': [np.nan] * len(stock_data),
+                    'roc_12m': [np.nan] * len(stock_data),
+                    'volatility_30d': [np.nan] * len(stock_data),
+                    'volatility_90d': [np.nan] * len(stock_data),
+                    'rsi_14d': [np.nan] * len(stock_data),
+                    'price_to_ma50': [np.nan] * len(stock_data),
+                    'price_to_ma200': [np.nan] * len(stock_data),
+                    'momentum_score': [np.nan] * len(stock_data)
+                })
+                all_technical_indicators.append(empty_indicators)
+
+        # Combine technical indicators with fundamental data
+        technical_df = pd.concat(all_technical_indicators, ignore_index=True)
+        training_data = pd.concat([training_data.reset_index(drop=True), technical_df.reset_index(drop=True)], axis=1)
+
+        print(f"    Technical indicators added: {len(technical_df.columns)}")
+        print(f"    Total features now: {len(training_data.columns)}")
+
         # Add price returns as target variable
-        print(f"\n[2] Fetching price data for returns calculation...")
+        print(f"\n[3] Fetching price data for returns calculation (target variable)...")
 
         all_returns = []
         unique_stocks = training_data['ticker'].unique()
@@ -140,7 +189,7 @@ class ScreenerModelTrainer:
         training_data = training_data.dropna(subset=['next_quarter_return'])
         after_drop = len(training_data)
 
-        print(f"\n[3] Returns calculated:")
+        print(f"\n[4] Returns calculated:")
         print(f"    Valid return data: {after_drop}/{before_drop} quarters")
         print(f"    Dropped: {before_drop - after_drop} quarters (no price data)")
 
@@ -148,7 +197,7 @@ class ScreenerModelTrainer:
             raise ValueError(f"Insufficient data for training! Only {len(training_data)} quarters with valid returns. Need at least 100.")
 
         # Print statistics about the returns
-        print(f"\n[4] Target variable statistics:")
+        print(f"\n[5] Target variable statistics:")
         print(f"    Mean return: {training_data['next_quarter_return'].mean():.2f}%")
         print(f"    Std return: {training_data['next_quarter_return'].std():.2f}%")
         print(f"    Min return: {training_data['next_quarter_return'].min():.2f}%")
@@ -165,10 +214,10 @@ class ScreenerModelTrainer:
         # Store feature names
         self.feature_names = feature_cols
 
-        print(f"\n[5] Final dataset prepared:")
+        print(f"\n[6] Final dataset prepared:")
         print(f"    Training samples: {len(X)}")
-        print(f"    Features: {len(self.feature_names)}")
-        print(f"    Feature list: {', '.join(self.feature_names[:10])}...")
+        print(f"    Features: {len(self.feature_names)} (fundamentals + technical indicators)")
+        print(f"    Sample features: {', '.join(self.feature_names[:15])}...")
 
         return X, y
 
