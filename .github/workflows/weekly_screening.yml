@@ -29,7 +29,7 @@ jobs:
           python scripts/automated_screening.py
 
       - name: Upload screening results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: screening-results
           path: |
@@ -41,7 +41,7 @@ jobs:
         if: github.event_name == 'schedule'  # Only for scheduled runs
         run: |
           git config --local user.email "action@github.com"
-          git config --local user.name: "GitHub Action"
+          git config --local user.name "GitHub Action"
           git add screening_results_*.csv
           git diff --quiet && git diff --staged --quiet || git commit -m "Auto: Weekly screening results $(date +'%Y-%m-%d')"
           # Note: Push disabled by default for safety
