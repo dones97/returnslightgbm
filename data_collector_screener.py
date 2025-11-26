@@ -135,8 +135,21 @@ class ScreenerDataCollector:
         df['sales_growth_ma3'] = df['sales_growth_qoq'].rolling(3).mean()
         df['profit_growth_ma3'] = df['profit_growth_qoq'].rolling(3).mean()
 
+        # Technical/Momentum features derived from fundamentals
+        # Acceleration (rate of change of growth)
+        df['sales_acceleration'] = df['sales_growth_qoq'].diff()
+        df['profit_acceleration'] = df['profit_growth_qoq'].diff()
+
+        # Momentum strength (consecutive positive/negative growth)
+        df['sales_momentum_streak'] = (df['sales_growth_qoq'] > 0).astype(int)
+        df['profit_momentum_streak'] = (df['profit_growth_qoq'] > 0).astype(int)
+
+        # Relative strength (current vs historical average)
+        df['sales_relative_strength'] = df['sales'] / df['sales'].rolling(4).mean()
+        df['profit_relative_strength'] = df['net_profit'] / (df['net_profit'].rolling(4).mean() + 1e-6)
+
         # Volatility metrics
-        df['sales_volatility'] = df['sales'].rolling(4).std() / df['sales'].rolling(4).mean()
+        df['sales_volatility'] = df['sales'].rolling(4).std() / (df['sales'].rolling(4).mean() + 1e-6)
         df['profit_volatility'] = df['net_profit'].rolling(4).std() / (df['net_profit'].rolling(4).mean() + 1e-6)
 
         # Quality score (higher is better)
