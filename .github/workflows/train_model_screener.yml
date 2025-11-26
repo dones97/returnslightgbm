@@ -1,0 +1,78 @@
+name: Train Model - Screener.in Database
+
+on:
+  schedule:
+    # Run on 1st of every month at 2 AM UTC
+    - cron: '0 2 1 * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  train-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy lightgbm scikit-learn yfinance requests beautifulsoup4
+
+      - name: Check for screener database
+        run: |
+          if [ ! -f "screener_data.db" ]; then
+            echo "[ERROR] screener_data.db not found!"
+            echo "Please run 'Build Screener.in Database' workflow first"
+            exit 1
+          fi
+
+          echo "[OK] Found screener database"
+          ls -lh screener_data.db
+
+      - name: Train model
+        run: python model_trainer_screener.py
+
+      - name: Upload model as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model-screener
+          path: trained_model_screener.pkl
+          retention-days: 90
+
+      - name: Commit trained model
+        run: |
+          # Configure git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          # Add model
+          git add trained_model_screener.pkl
+
+          # Commit if there are changes
+          git diff --quiet && git diff --staged --quiet || (
+            git commit -m "Auto: Update trained model - Screener.in DB ($(date +'%Y-%m-%d'))" \
+                       -m "Model trained using screener.in fundamental data" \
+                       -m "500 random stocks, 10 quarters of data"
+
+            # Pull with rebase to avoid conflicts
+            git pull --rebase origin main
+
+            # Push to repository
+            git push
+          )
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "Training workflow completed"
+          if [ -f "trained_model_screener.pkl" ]; then
+            echo "[OK] Model file created"
+            ls -lh trained_model_screener.pkl
+          fi
