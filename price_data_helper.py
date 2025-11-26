@@ -80,15 +80,24 @@ class PriceDataHelper:
             DataFrame with Date index and Close prices
         """
         try:
+            import time
+
             # Add .NS suffix for NSE stocks
             yf_ticker = f"{ticker}.NS"
 
             # Fetch 3 years of data (enough for quarters + forward returns)
-            # Use timeout and disable progress bar for efficiency
-            stock = yf.Ticker(yf_ticker)
-            hist = stock.history(period="3y", timeout=10)
+            # Disable progress bar and logs to avoid spam
+            import logging
+            logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
-            if hist.empty:
+            stock = yf.Ticker(yf_ticker)
+
+            # Add small delay to avoid rate limiting
+            time.sleep(0.1)
+
+            hist = stock.history(period="3y", timeout=15, raise_errors=False)
+
+            if hist is None or hist.empty:
                 return None
 
             # Keep only Close prices
