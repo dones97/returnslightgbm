@@ -91,17 +91,19 @@ class ReturnDirectionModel:
         df_processed, feature_cols = self.prepare_features(df)
         self.feature_names = feature_cols
 
+        # Strip timezone from ALL datetime columns to avoid conversion errors
+        for col in df_processed.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_processed[col]):
+                df_processed[col] = pd.to_datetime(df_processed[col])
+                if hasattr(df_processed[col].dtype, 'tz') and df_processed[col].dtype.tz is not None:
+                    df_processed[col] = df_processed[col].dt.tz_localize(None)
+
         X = df_processed[feature_cols]
         y = df_processed['Return_Direction']
 
         # Train-test split
         if use_time_series_split:
             # For time series, split by date to avoid look-ahead bias
-            # Convert Date to datetime and remove timezone info to avoid comparison errors
-            df_processed['Date'] = pd.to_datetime(df_processed['Date'])
-            if hasattr(df_processed['Date'].dtype, 'tz') and df_processed['Date'].dtype.tz is not None:
-                df_processed['Date'] = df_processed['Date'].dt.tz_localize(None)
-
             df_processed = df_processed.sort_values('Date')
             split_idx = int(len(df_processed) * (1 - self.test_size))
             X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
@@ -456,6 +458,14 @@ class StockScorer:
             latest_data = current_data.sort_values('Date').groupby('Ticker').tail(1)
         else:
             latest_data = current_data.copy()
+
+        # Strip timezone from ALL datetime columns to avoid conversion errors
+        latest_data = latest_data.copy()
+        for col in latest_data.columns:
+            if pd.api.types.is_datetime64_any_dtype(latest_data[col]):
+                latest_data[col] = pd.to_datetime(latest_data[col])
+                if hasattr(latest_data[col].dtype, 'tz') and latest_data[col].dtype.tz is not None:
+                    latest_data[col] = latest_data[col].dt.tz_localize(None)
 
         # Get model predictions (probability of positive return)
         try:
