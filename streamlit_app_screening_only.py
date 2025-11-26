@@ -411,9 +411,255 @@ class StockScreenerApp:
                     avg_score = filtered['composite_score'].mean()
                     st.metric("Avg Score", f"{avg_score:.1f}")
 
+            # Deep Dive Analysis
+            st.markdown("---")
+            st.markdown("### 🔬 Deep Dive: Stock Analysis")
+
+            # Stock selector
+            ticker_options = sorted(filtered['Ticker'].str.replace('.NS', '').tolist())
+            selected_ticker_clean = st.selectbox(
+                "Select a stock for detailed analysis:",
+                options=ticker_options,
+                help="Choose a stock from the filtered results to see detailed breakdown"
+            )
+
+            if st.button("🔍 Analyze", type="primary"):
+                selected_ticker = f"{selected_ticker_clean}.NS"
+                stock_data = results[results['Ticker'] == selected_ticker].iloc[0]
+
+                st.markdown(f"## 📊 Detailed Analysis: **{selected_ticker_clean}**")
+
+                # Overall scores
+                st.markdown("### 🎯 Overall Scores")
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric(
+                        "Quality Quintile",
+                        stock_data['quality_quintile'],
+                        help="Q5 = Highest quality, Q1 = Lowest quality"
+                    )
+
+                with col2:
+                    st.metric(
+                        "Composite Score",
+                        f"{stock_data['composite_score']:.1f}",
+                        help="Overall quality score (0-100). Higher is better."
+                    )
+
+                with col3:
+                    st.metric(
+                        "Model Probability",
+                        f"{stock_data['predicted_probability']:.1%}",
+                        help="Predicted probability of positive return next month"
+                    )
+
+                with col4:
+                    # Calculate percentile rank
+                    percentile = (results['composite_score'] < stock_data['composite_score']).mean()
+                    st.metric(
+                        "Market Rank",
+                        f"Top {(1-percentile)*100:.0f}%",
+                        help="Percentile rank among all screened stocks"
+                    )
+
+                st.markdown("---")
+
+                # Factor breakdown
+                st.markdown("### 📈 Factor Breakdown")
+
+                # Define factor categories
+                momentum_factors = ['ROC_1M', 'ROC_3M', 'ROC_6M', 'ROC_12M']
+                fundamental_factors = ['ROE', 'ROA', 'ROIC', 'Net_Margin', 'Operating_Margin']
+                quality_factors = ['F_Score', 'Z_Score', 'Current_Ratio', 'Quick_Ratio']
+                valuation_factors = ['PE_Ratio', 'PB_Ratio', 'Debt_to_Equity', 'Debt_to_Assets']
+                growth_factors = ['Revenue_Growth_YoY', 'Net_Income_Growth_YoY', 'EBITDA_Growth_YoY']
+
+                # Create tabs for different factor categories
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    "🚀 Momentum", "💰 Profitability", "⭐ Quality", "💵 Valuation", "📊 Growth"
+                ])
+
+                with tab1:
+                    st.markdown("#### Momentum Indicators")
+                    self._display_factor_analysis(stock_data, results, momentum_factors, "Momentum")
+
+                with tab2:
+                    st.markdown("#### Profitability Metrics")
+                    self._display_factor_analysis(stock_data, results, fundamental_factors, "Profitability")
+
+                with tab3:
+                    st.markdown("#### Quality Scores")
+                    self._display_factor_analysis(stock_data, results, quality_factors, "Quality")
+
+                with tab4:
+                    st.markdown("#### Valuation Ratios")
+                    self._display_factor_analysis(stock_data, results, valuation_factors, "Valuation")
+
+                with tab5:
+                    st.markdown("#### Growth Rates")
+                    self._display_factor_analysis(stock_data, results, growth_factors, "Growth")
+
+                # Feature importance contribution
+                st.markdown("---")
+                st.markdown("### 🎯 Model Prediction Drivers")
+
+                # Load model to get feature importance
+                model = self.load_model()
+                if model and model.feature_importance is not None:
+                    top_features = model.get_feature_importance(top_n=10)
+
+                    st.write("""
+                    **How the model predicted this stock's probability:**
+
+                    The model uses these top 10 features (in order of importance):
+                    """)
+
+                    # Show stock's values for top features
+                    feature_data = []
+                    for _, row in top_features.iterrows():
+                        feature = row['feature']
+                        if feature in stock_data.index:
+                            value = stock_data[feature]
+                            if pd.notna(value):
+                                # Calculate percentile
+                                percentile = (results[feature] < value).mean() if feature in results.columns else 0.5
+
+                                feature_data.append({
+                                    'Feature': feature,
+                                    'Value': f"{value:.2f}" if isinstance(value, (int, float)) else str(value),
+                                    'Percentile': f"{percentile*100:.0f}%",
+                                    'Impact': '🔼 Positive' if percentile > 0.5 else '🔽 Negative',
+                                    'Importance': row['importance']
+                                })
+
+                    if feature_data:
+                        feature_df = pd.DataFrame(feature_data)
+                        st.dataframe(feature_df, use_container_width=True, hide_index=True)
+
+                        st.info("""
+                        **Reading this table:**
+                        - **Feature**: Key metric used by the model
+                        - **Value**: This stock's value for that metric
+                        - **Percentile**: Where this stock ranks (higher % = better)
+                        - **Impact**: Whether this helps (🔼) or hurts (🔽) the prediction
+                        - **Importance**: How much weight the model gives this feature
+                        """)
+
+                # Summary interpretation
+                st.markdown("---")
+                st.markdown("### 💡 Interpretation")
+
+                prob = stock_data['predicted_probability']
+                score = stock_data['composite_score']
+                quintile = stock_data['quality_quintile']
+
+                interpretation = []
+
+                # Probability interpretation
+                if prob >= 0.65:
+                    interpretation.append("✅ **Strong bullish signal** - Model shows high confidence for positive returns")
+                elif prob >= 0.55:
+                    interpretation.append("🟢 **Moderate bullish signal** - Model slightly favors positive returns")
+                elif prob >= 0.45:
+                    interpretation.append("🟡 **Neutral** - Model sees balanced risk/reward")
+                else:
+                    interpretation.append("🔴 **Bearish signal** - Model suggests caution")
+
+                # Quality interpretation
+                if quintile == 'Q5 (Highest)':
+                    interpretation.append("⭐ **Top quality company** - Highest quintile for overall quality")
+                elif quintile == 'Q4 (High)':
+                    interpretation.append("🌟 **High quality company** - Above-average quality metrics")
+                elif quintile == 'Q3 (Medium)':
+                    interpretation.append("📊 **Average quality** - Middle-of-the-road fundamentals")
+                else:
+                    interpretation.append("⚠️ **Lower quality** - Be aware of quality concerns")
+
+                # Score interpretation
+                if score >= 80:
+                    interpretation.append("🏆 **Exceptional composite score** - Among the best stocks screened")
+                elif score >= 70:
+                    interpretation.append("🎯 **Strong composite score** - Well above average")
+                elif score >= 50:
+                    interpretation.append("📈 **Decent composite score** - Meets quality threshold")
+
+                for item in interpretation:
+                    st.markdown(item)
+
+                st.warning("""
+                **Disclaimer:** This analysis is based on historical data and model predictions.
+                Always conduct your own research and consider multiple factors before investing.
+                Past performance does not guarantee future results.
+                """)
+
         except Exception as e:
             st.error(f"Error loading screening results: {str(e)}")
             st.exception(e)
+
+    def _display_factor_analysis(self, stock_data, all_results, factors, category_name):
+        """Helper function to display factor analysis"""
+        available_factors = [f for f in factors if f in stock_data.index]
+
+        if not available_factors:
+            st.info(f"No {category_name} data available for this stock")
+            return
+
+        factor_data = []
+        for factor in available_factors:
+            value = stock_data[factor]
+            if pd.notna(value):
+                # Calculate percentile among all stocks
+                if factor in all_results.columns:
+                    percentile = (all_results[factor] < value).mean()
+                else:
+                    percentile = 0.5
+
+                # Determine rating
+                if percentile >= 0.8:
+                    rating = "⭐ Excellent"
+                    color = "green"
+                elif percentile >= 0.6:
+                    rating = "✅ Good"
+                    color = "blue"
+                elif percentile >= 0.4:
+                    rating = "➖ Average"
+                    color = "gray"
+                elif percentile >= 0.2:
+                    rating = "⚠️ Below Average"
+                    color = "orange"
+                else:
+                    rating = "🔴 Poor"
+                    color = "red"
+
+                # Format value
+                if factor.endswith('_Ratio') or factor in ['ROE', 'ROA', 'ROIC', 'Net_Margin', 'Operating_Margin', 'Gross_Margin']:
+                    formatted_value = f"{value:.1%}" if abs(value) < 10 else f"{value:.1f}"
+                elif 'Growth' in factor or 'ROC' in factor:
+                    formatted_value = f"{value:.1%}"
+                else:
+                    formatted_value = f"{value:.2f}"
+
+                factor_data.append({
+                    'Metric': factor.replace('_', ' '),
+                    'Value': formatted_value,
+                    'Percentile': f"{percentile*100:.0f}th",
+                    'Rating': rating
+                })
+
+        if factor_data:
+            df = pd.DataFrame(factor_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            # Visual percentile chart
+            st.markdown("**Percentile Rankings:**")
+            chart_data = pd.DataFrame({
+                'Metric': [d['Metric'] for d in factor_data],
+                'Percentile': [(all_results[factors[i]] < stock_data[factors[i]]).mean() * 100
+                              for i, _ in enumerate(factor_data) if factors[i] in all_results.columns]
+            })
+            if not chart_data.empty:
+                st.bar_chart(chart_data.set_index('Metric')['Percentile'], height=200)
 
 
     def run(self):
