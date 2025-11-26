@@ -182,10 +182,19 @@ class EnhancedStockDataCollector:
 
         # Create DataFrame
         quarterly_data = pd.DataFrame(metrics_by_quarter)
+
+        # Convert Date column and strip timezone
         quarterly_data['Date'] = pd.to_datetime(quarterly_data['Date'])
-        # Normalize timezone to avoid comparison errors
         if hasattr(quarterly_data['Date'].dtype, 'tz') and quarterly_data['Date'].dtype.tz is not None:
             quarterly_data['Date'] = quarterly_data['Date'].dt.tz_localize(None)
+
+        # CRITICAL FIX: Ensure ALL columns are proper numeric types
+        # Some stocks may have accidentally stored datetime objects in numeric columns
+        for col in quarterly_data.columns:
+            if col != 'Date':
+                # Force convert to numeric, coercing any non-numeric (like datetime) to NaN
+                quarterly_data[col] = pd.to_numeric(quarterly_data[col], errors='coerce')
+
         quarterly_data = quarterly_data.sort_values('Date')
         quarterly_data = quarterly_data.set_index('Date')
 
@@ -430,6 +439,13 @@ class EnhancedStockDataCollector:
 
         # Add ticker
         monthly_data['Ticker'] = ticker
+
+        # FINAL SAFETY CHECK: Ensure no datetime objects in numeric columns
+        # This catches any edge cases where datetime might have slipped through
+        for col in monthly_data.columns:
+            if col not in ['Date', 'Ticker'] and monthly_data[col].dtype == 'object':
+                # Try to convert object columns to numeric
+                monthly_data[col] = pd.to_numeric(monthly_data[col], errors='coerce')
 
         return monthly_data
 
