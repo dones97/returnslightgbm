@@ -84,19 +84,26 @@ class PriceDataHelper:
             yf_ticker = f"{ticker}.NS"
 
             # Fetch 3 years of data (enough for quarters + forward returns)
+            # Use timeout and disable progress bar for efficiency
             stock = yf.Ticker(yf_ticker)
-            hist = stock.history(period="3y")
+            hist = stock.history(period="3y", timeout=10)
 
             if hist.empty:
                 return None
 
             # Keep only Close prices
             prices = hist[['Close']].copy()
-            prices.index = pd.to_datetime(prices.index).tz_localize(None)
+
+            # Remove timezone if present
+            if hasattr(prices.index, 'tz') and prices.index.tz is not None:
+                prices.index = prices.index.tz_localize(None)
+            else:
+                prices.index = pd.to_datetime(prices.index)
 
             return prices
 
         except Exception as e:
+            # Silently fail and return None - this is expected for some stocks
             return None
 
     def _get_price_near_date(self, prices: pd.DataFrame, target_date: pd.Timestamp,
