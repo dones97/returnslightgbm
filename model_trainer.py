@@ -233,6 +233,16 @@ class ReturnDirectionModel:
         df_processed, _ = self.prepare_features(df)
         X = df_processed[self.feature_names]
 
+        # DEBUG: Check what's actually in X before passing to model
+        print(f"\n🔍 DEBUG predict_proba:")
+        print(f"  X shape: {X.shape}")
+        print(f"  X dtypes:\n{X.dtypes}")
+        print(f"  Checking for non-numeric values...")
+        for col in X.columns:
+            if X[col].dtype == 'object' or pd.api.types.is_datetime64_any_dtype(X[col]):
+                print(f"    ⚠️  Column '{col}' has dtype: {X[col].dtype}")
+                print(f"       Sample values: {X[col].head(3).tolist()}")
+
         predictions = self.model.predict(X, num_iteration=self.model.best_iteration)
 
         return predictions
