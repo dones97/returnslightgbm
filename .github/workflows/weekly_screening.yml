@@ -37,12 +37,24 @@ jobs:
             screening_results_*.csv
           retention-days: 30
 
-      - name: Commit results (if configured)
-        if: github.event_name == 'schedule'  # Only for scheduled runs
+      - name: Commit screening results to repository
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+
+          # Add both pickle and latest CSV
+          git add screening_results.pkl
           git add screening_results_*.csv
-          git diff --quiet && git diff --staged --quiet || git commit -m "Auto: Weekly screening results $(date +'%Y-%m-%d')"
-          # Note: Push disabled by default for safety
-          # git push
+
+          # Commit if there are changes
+          git diff --quiet && git diff --staged --quiet || (
+            git commit -m "Auto: Weekly screening results ($(date +'%Y-%m-%d'))" \
+                       -m "Screened $(grep -o 'Total stocks analyzed: [0-9]*' screening_results_*.csv | head -1 | cut -d' ' -f4) stocks" \
+                       -m "Results available in screening_results.pkl and CSV"
+
+            # Pull with rebase to avoid conflicts
+            git pull --rebase origin main
+
+            # Push to repository
+            git push
+          )
