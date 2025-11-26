@@ -440,6 +440,12 @@ class EnhancedStockDataCollector:
         # Add ticker
         monthly_data['Ticker'] = ticker
 
+        # CRITICAL FIX: Strip timezone from index (Date) BEFORE concatenating with other stocks
+        # This prevents timezone mismatch errors when combining data
+        if isinstance(monthly_data.index, pd.DatetimeIndex):
+            if monthly_data.index.tz is not None:
+                monthly_data.index = monthly_data.index.tz_localize(None)
+
         # FINAL SAFETY CHECK: Ensure no datetime objects in numeric columns
         # This catches any edge cases where datetime might have slipped through
         # Force convert ALL columns to numeric (except Date and Ticker)
