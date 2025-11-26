@@ -1,0 +1,137 @@
+name: Update Screener.in Database
+
+on:
+  schedule:
+    # Run monthly on the 15th at 3 AM UTC (after model training)
+    - cron: '0 3 15 * *'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      batch_size:
+        description: 'Number of stocks to scrape per run'
+        required: false
+        default: '100'
+
+jobs:
+  update-database:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true  # For large database file
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 pandas
+
+      - name: Download existing database (if exists)
+        continue-on-error: true
+        run: |
+          # Try to get existing database from repo
+          if [ -f "screener_data.db" ]; then
+            echo "✅ Found existing database"
+            ls -lh screener_data.db
+          else
+            echo "📝 No existing database, will create new one"
+          fi
+
+      - name: Scrape screener.in data
+        run: |
+          python << 'EOF'
+          from screener_scraper import ScreenerScraper
+          import pandas as pd
+          import time
+
+          # Load NSE universe
+          df = pd.read_csv('NSE_Universe.csv')
+          all_tickers = df['Ticker'].str.replace('.NS', '').tolist()
+
+          print(f"Total stocks to process: {len(all_tickers)}")
+
+          # Initialize scraper
+          scraper = ScreenerScraper(db_path='screener_data.db')
+
+          # Check which stocks we already have
+          import sqlite3
+          conn = sqlite3.connect('screener_data.db')
+          existing = pd.read_sql_query("SELECT ticker FROM companies WHERE data_available = 1", conn)
+          conn.close()
+
+          existing_tickers = set(existing['ticker'].tolist())
+          print(f"Already scraped: {len(existing_tickers)} stocks")
+
+          # Prioritize new stocks and old data
+          new_tickers = [t for t in all_tickers if t not in existing_tickers]
+
+          # Limit batch size for GitHub Actions
+          batch_size = int("${{ github.event.inputs.batch_size || '100' }}")
+
+          if new_tickers:
+            print(f"\nScraping {min(batch_size, len(new_tickers))} new stocks...")
+            to_scrape = new_tickers[:batch_size]
+          else:
+            print(f"\nRefreshing {min(batch_size, len(all_tickers))} existing stocks...")
+            to_scrape = all_tickers[:batch_size]
+
+          # Scrape with rate limiting (2 seconds between requests)
+          results = scraper.scrape_multiple_stocks(to_scrape, delay=2.0)
+
+          # Save results summary
+          results.to_csv('scraping_results.csv', index=False)
+          print(f"\n✅ Scraping complete!")
+          print(f"   Database: screener_data.db")
+          print(f"   Summary: scraping_results.csv")
+          EOF
+
+      - name: Upload database as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-database
+          path: |
+            screener_data.db
+            scraping_results.csv
+          retention-days: 90
+
+      - name: Commit updated database
+        run: |
+          # Check database size
+          db_size=$(du -h screener_data.db | cut -f1)
+          echo "Database size: $db_size"
+
+          # Configure git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          # Add database
+          git add screener_data.db
+          git add scraping_results.csv
+
+          # Commit if there are changes
+          git diff --quiet && git diff --staged --quiet || (
+            # Get stats from results
+            total=$(grep -c "success\|error\|not_found" scraping_results.csv || echo "0")
+            success=$(grep -c "success" scraping_results.csv || echo "0")
+
+            git commit -m "Auto: Update screener.in database ($(date +'%Y-%m-%d'))" \
+                       -m "Scraped $success stocks successfully" \
+                       -m "Database size: $db_size"
+
+            # Pull with rebase to avoid conflicts
+            git pull --rebase origin main
+
+            # Push to repository
+            git push
+          )
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Workflow completed"
+          ls -lh screener_data.db 2>/dev/null || echo "No database file"

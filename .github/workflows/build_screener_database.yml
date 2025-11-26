@@ -1,0 +1,223 @@
+name: Build Screener.in Database
+
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      batch_size:
+        description: 'Number of stocks to scrape (leave empty for all)'
+        required: false
+        default: ''
+
+jobs:
+  build-database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 pandas
+
+      - name: Download existing database (if exists)
+        continue-on-error: true
+        run: |
+          if [ -f "screener_data.db" ]; then
+            echo "[OK] Found existing database"
+            ls -lh screener_data.db
+          else
+            echo "[INFO] No existing database, will create new one"
+          fi
+
+      - name: Build screener database
+        run: |
+          python << 'EOF'
+          import pandas as pd
+          from screener_scraper import ScreenerScraper
+          import sqlite3
+          import time
+          import sys
+
+          print("\n" + "="*80)
+          print("BUILD SCREENER.IN DATABASE")
+          print("="*80)
+
+          # Load NSE universe
+          print("\n[1] Loading NSE universe...")
+          df = pd.read_csv('NSE_Universe.csv')
+          all_tickers = df['Ticker'].str.replace('.NS', '').tolist()
+
+          print(f"    Total stocks available: {len(all_tickers)}")
+
+          # Initialize scraper
+          print("\n[2] Initializing scraper...")
+          scraper = ScreenerScraper(db_path='screener_data.db')
+          print("    Database initialized: screener_data.db")
+
+          # Check existing data
+          conn = sqlite3.connect('screener_data.db')
+          existing = pd.read_sql_query("SELECT ticker FROM companies WHERE data_available = 1", conn)
+          conn.close()
+
+          existing_tickers = set(existing['ticker'].tolist())
+          print(f"    Already scraped: {len(existing_tickers)} stocks")
+
+          # Determine what to scrape
+          new_tickers = [t for t in all_tickers if t not in existing_tickers]
+
+          # Check if batch size specified
+          batch_input = "${{ github.event.inputs.batch_size }}"
+          if batch_input and batch_input.strip():
+              batch_size = int(batch_input)
+              print(f"\n[3] Batch mode: Scraping {batch_size} stocks")
+              if new_tickers:
+                  to_scrape = new_tickers[:batch_size]
+                  print(f"    Prioritizing new stocks: {len(to_scrape)} new stocks")
+              else:
+                  to_scrape = all_tickers[:batch_size]
+                  print(f"    Refreshing existing stocks: {len(to_scrape)} stocks")
+          else:
+              print(f"\n[3] Full mode: Scraping all stocks")
+              if new_tickers:
+                  to_scrape = new_tickers
+                  print(f"    Found {len(to_scrape)} new stocks to scrape")
+              else:
+                  to_scrape = all_tickers
+                  print(f"    Refreshing all {len(to_scrape)} stocks")
+
+          print(f"\n    Estimated time: {(len(to_scrape) * 2.5) / 60:.1f} minutes")
+          print(f"    Starting at {time.strftime('%H:%M:%S UTC')}")
+          print()
+
+          start_time = time.time()
+
+          # Scrape with rate limiting
+          results = scraper.scrape_multiple_stocks(to_scrape, delay=2.0)
+
+          elapsed = time.time() - start_time
+
+          # Save results summary
+          results.to_csv('screener_scraping_results.csv', index=False)
+
+          print(f"\n{'='*80}")
+          print("SCRAPING COMPLETE")
+          print(f"{'='*80}")
+          print(f"\n[OK] Total time: {elapsed / 60:.1f} minutes")
+          print(f"[OK] Database: screener_data.db")
+          print(f"[OK] Results summary: screener_scraping_results.csv")
+
+          # Final statistics
+          conn = sqlite3.connect('screener_data.db')
+          total_in_db = pd.read_sql_query("SELECT COUNT(*) as count FROM companies WHERE data_available = 1", conn)
+          total_companies = pd.read_sql_query("SELECT COUNT(*) as count FROM companies", conn)
+          conn.close()
+
+          print(f"\n[STATS] Total stocks in database: {total_in_db['count'].iloc[0]}")
+          print(f"[STATS] Total records: {total_companies['count'].iloc[0]}")
+          print(f"[STATS] This batch - Success: {sum(results['status'] == 'success')}")
+          print(f"[STATS] This batch - Not found: {sum(results['status'] == 'not_found')}")
+          print(f"[STATS] This batch - Failed: {sum(results['status'] == 'error')}")
+
+          # Check if we're done
+          remaining = len(all_tickers) - total_in_db['count'].iloc[0]
+          if remaining > 0:
+              print(f"\n[INFO] {remaining} stocks remaining. Re-run workflow to continue.")
+          else:
+              print(f"\n[OK] All stocks scraped!")
+          EOF
+
+      - name: Check database size
+        run: |
+          if [ -f "screener_data.db" ]; then
+            db_size=$(du -h screener_data.db | cut -f1)
+            echo "Database size: $db_size"
+
+            # Check if database is too large for regular git (>50MB)
+            size_bytes=$(stat -f%z screener_data.db 2>/dev/null || stat -c%s screener_data.db 2>/dev/null)
+            size_mb=$((size_bytes / 1024 / 1024))
+            echo "Database size: ${size_mb}MB"
+
+            if [ $size_mb -gt 50 ]; then
+              echo "[WARNING] Database is larger than 50MB. Consider using Git LFS."
+              echo "For now, we'll still commit it, but you may want to set up LFS later."
+            fi
+          fi
+
+      - name: Upload database as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-database
+          path: |
+            screener_data.db
+            screener_scraping_results.csv
+          retention-days: 90
+
+      - name: Commit database to repository
+        run: |
+          # Check database size
+          if [ -f "screener_data.db" ]; then
+            db_size=$(du -h screener_data.db | cut -f1)
+          else
+            db_size="0"
+          fi
+
+          # Configure git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          # Add database and results
+          git add screener_data.db
+          git add screener_scraping_results.csv
+
+          # Commit if there are changes
+          git diff --quiet && git diff --staged --quiet || (
+            # Get stats from results
+            successful=$(grep -c "success" screener_scraping_results.csv || echo "0")
+
+            git commit -m "Auto: Update screener.in database ($(date +'%Y-%m-%d'))" \
+                       -m "Scraped $successful stocks in this batch" \
+                       -m "Database size: $db_size"
+
+            # Pull with rebase to avoid conflicts
+            git pull --rebase origin main
+
+            # Push to repository
+            git push
+          )
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Workflow completed"
+          if [ -f "screener_data.db" ]; then
+            ls -lh screener_data.db
+
+            # Show sample data
+            python << 'EOF'
+          import sqlite3
+          import pandas as pd
+
+          conn = sqlite3.connect('screener_data.db')
+          stats = pd.read_sql_query("""
+              SELECT
+                  COUNT(*) as total_stocks,
+                  SUM(CASE WHEN data_available = 1 THEN 1 ELSE 0 END) as with_data
+              FROM companies
+          """, conn)
+          conn.close()
+
+          print("\n[DATABASE STATS]")
+          print(f"Total stocks: {stats['total_stocks'].iloc[0]}")
+          print(f"With data: {stats['with_data'].iloc[0]}")
+          EOF
+          fi
