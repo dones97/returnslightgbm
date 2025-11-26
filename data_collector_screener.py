@@ -167,7 +167,7 @@ class ScreenerDataCollector:
         return pd.Series(index=quarterly_dates.index, dtype=float)
 
     def prepare_training_data(self, tickers: List[str],
-                            lookback_quarters: int = 10) -> Tuple[pd.DataFrame, pd.Series]:
+                            lookback_quarters: int = 10) -> pd.DataFrame:
         """
         Prepare training dataset from multiple stocks
 
@@ -176,8 +176,7 @@ class ScreenerDataCollector:
             lookback_quarters: Number of quarters to use (default: 10 = 2.5 years)
 
         Returns:
-            X: Features DataFrame
-            y: Target (next quarter return)
+            DataFrame with features for all stocks
         """
         all_data = []
 
@@ -212,7 +211,7 @@ class ScreenerDataCollector:
 
         if not all_data:
             print("[ERROR] No data collected!")
-            return pd.DataFrame(), pd.Series()
+            return pd.DataFrame()
 
         # Combine all stocks
         combined = pd.concat(all_data, ignore_index=True)
@@ -221,10 +220,8 @@ class ScreenerDataCollector:
         print(f"    Total quarters: {len(combined)}")
         print(f"    Unique stocks: {combined['ticker'].nunique()}")
         print(f"    Features: {len(combined.columns)}")
-
-        # For now, remove rows with NaN (in production, you'll add price returns as target)
-        # We need to integrate price data source
-        combined = combined.dropna()
+        print(f"    DataFrame shape: {combined.shape}")
+        print(f"    DataFrame empty: {combined.empty}")
 
         return combined
 
