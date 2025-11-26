@@ -93,19 +93,44 @@ class ScreenerModelTrainer:
         all_returns = []
         unique_stocks = training_data['ticker'].unique()
 
+        print(f"    Total stocks to fetch prices for: {len(unique_stocks)}")
+
+        success_count = 0
+        fail_count = 0
+
         for i, ticker in enumerate(unique_stocks, 1):
             if i % 50 == 0:
-                print(f"    Processing {i}/{len(unique_stocks)}...")
+                print(f"    Processing {i}/{len(unique_stocks)}... (Success: {success_count}, Failed: {fail_count})")
 
-            # Get this stock's data
-            stock_data = training_data[training_data['ticker'] == ticker].copy()
+            try:
+                # Get this stock's data
+                stock_data = training_data[training_data['ticker'] == ticker].copy()
 
-            # Calculate returns
-            returns = self.price_helper.get_quarterly_returns(
-                ticker, stock_data['quarter_date']
-            )
+                # Calculate returns
+                returns = self.price_helper.get_quarterly_returns(
+                    ticker, stock_data['quarter_date']
+                )
 
-            all_returns.extend(returns.tolist())
+                all_returns.extend(returns.tolist())
+
+                # Check if any valid returns (not all NaN)
+                if not all(pd.isna(r) for r in returns):
+                    success_count += 1
+                else:
+                    fail_count += 1
+
+            except Exception as e:
+                print(f"    [WARNING] Error fetching prices for {ticker}: {str(e)}")
+                # Get this stock's data
+                stock_data = training_data[training_data['ticker'] == ticker].copy()
+                # Add NaN for this stock's returns
+                all_returns.extend([np.nan] * len(stock_data))
+                fail_count += 1
+
+        print(f"    Completed price data fetch:")
+        print(f"      Total stocks: {len(unique_stocks)}")
+        print(f"      Successful: {success_count} ({success_count/len(unique_stocks)*100:.1f}%)")
+        print(f"      Failed: {fail_count} ({fail_count/len(unique_stocks)*100:.1f}%)")
 
         # Add returns as column
         training_data['next_quarter_return'] = all_returns
@@ -120,7 +145,15 @@ class ScreenerModelTrainer:
         print(f"    Dropped: {before_drop - after_drop} quarters (no price data)")
 
         if len(training_data) < 100:
-            raise ValueError("Insufficient data for training! Need at least 100 quarters.")
+            raise ValueError(f"Insufficient data for training! Only {len(training_data)} quarters with valid returns. Need at least 100.")
+
+        # Print statistics about the returns
+        print(f"\n[4] Target variable statistics:")
+        print(f"    Mean return: {training_data['next_quarter_return'].mean():.2f}%")
+        print(f"    Std return: {training_data['next_quarter_return'].std():.2f}%")
+        print(f"    Min return: {training_data['next_quarter_return'].min():.2f}%")
+        print(f"    Max return: {training_data['next_quarter_return'].max():.2f}%")
+        print(f"    Median return: {training_data['next_quarter_return'].median():.2f}%")
 
         # Separate features and target
         exclude_cols = ['ticker', 'quarter_date', 'id', 'scraped_at', 'next_quarter_return']
@@ -132,14 +165,10 @@ class ScreenerModelTrainer:
         # Store feature names
         self.feature_names = feature_cols
 
-        print(f"\n[4] Final dataset:")
+        print(f"\n[5] Final dataset prepared:")
         print(f"    Training samples: {len(X)}")
         print(f"    Features: {len(self.feature_names)}")
-        print(f"    Target stats:")
-        print(f"      Mean return: {y.mean():.2f}%")
-        print(f"      Std return: {y.std():.2f}%")
-        print(f"      Min return: {y.min():.2f}%")
-        print(f"      Max return: {y.max():.2f}%")
+        print(f"    Feature list: {', '.join(self.feature_names[:10])}...")
 
         return X, y
 
