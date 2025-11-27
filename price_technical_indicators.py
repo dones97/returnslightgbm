@@ -14,8 +14,14 @@ from price_data_helper import PriceDataHelper
 class TechnicalIndicators:
     """Calculate technical indicators from price data"""
 
-    def __init__(self):
-        self.price_helper = PriceDataHelper()
+    def __init__(self, use_cache: bool = False):
+        """
+        Initialize technical indicators calculator
+
+        Args:
+            use_cache: If True, use cached price data
+        """
+        self.price_helper = PriceDataHelper(use_cache=use_cache)
 
     def calculate_indicators(self, ticker: str, quarter_dates: pd.Series) -> pd.DataFrame:
         """
