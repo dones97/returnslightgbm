@@ -1,0 +1,161 @@
+name: Monthly Screening - Classification Model
+
+on:
+  schedule:
+    # Run on 5th of every month at 2 AM UTC (after model training on 1st)
+    - cron: '0 2 5 * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  screen-stocks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull latest changes
+        run: |
+          git pull origin main || echo "Already up to date"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy lightgbm scikit-learn yfinance requests beautifulsoup4 lxml
+
+      - name: Check for required files
+        run: |
+          if [ ! -f "screener_data.db" ]; then
+            echo "[ERROR] screener_data.db not found!"
+            exit 1
+          fi
+
+          if [ ! -f "model_classification.pkl" ]; then
+            echo "[ERROR] model_classification.pkl not found!"
+            echo "Please run 'Train Classification Model' workflow first"
+            exit 1
+          fi
+
+          echo "[OK] All required files found"
+          ls -lh screener_data.db model_classification.pkl
+
+      - name: Download price cache artifact
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
+        with:
+          workflow: build_price_cache.yml
+          name: price-cache
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: warn
+
+      - name: Run screening
+        run: python scripts/screening_classification.py
+
+      - name: Verify screening output
+        run: |
+          if [ -f "screening_results_classification.pkl" ]; then
+            echo "[OK] Screening results created"
+            ls -lh screening_results_classification.pkl
+          else
+            echo "[ERROR] Screening failed - no output file"
+            exit 1
+          fi
+
+      - name: Upload screening results
+        uses: actions/upload-artifact@v4
+        with:
+          name: screening-results-classification
+          path: |
+            screening_results_classification.pkl
+            screening_results_classification_*.csv
+          retention-days: 30
+
+      - name: Commit screening results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          git add screening_results_classification.pkl
+          git add screening_results_classification_*.csv
+
+          git diff --quiet && git diff --staged --quiet || (
+            # Get stats from latest CSV
+            latest_csv=$(ls -t screening_results_classification_*.csv | head -1)
+            total_stocks=$(wc -l < "$latest_csv")
+            total_stocks=$((total_stocks - 1))  # Subtract header
+
+            # Count categories using Python
+            stats=$(python << 'EOF'
+          import pandas as pd
+          try:
+              results = pd.read_pickle('screening_results_classification.pkl')
+              strong_buy = sum(results['Category'] == 'Strong Buy')
+              buy = sum(results['Category'] == 'Buy')
+              prob_mean = results['Predicted_Probability'].mean()
+              print(f"{strong_buy}|{buy}|{prob_mean:.2%}")
+          except Exception as e:
+              print("0|0|0%")
+          EOF
+          )
+
+            strong_buy=$(echo $stats | cut -d'|' -f1)
+            buy=$(echo $stats | cut -d'|' -f2)
+            prob_mean=$(echo $stats | cut -d'|' -f3)
+
+            git commit -m "Auto: Monthly screening results - Classification Model ($(date +'%Y-%m-%d'))" \
+                       -m "Screened $total_stocks stocks" \
+                       -m "Strong Buy: $strong_buy, Buy: $buy" \
+                       -m "Mean probability: $prob_mean" \
+                       -m "Model: 65% accuracy classification model"
+
+            git pull --rebase origin main
+            git push
+          )
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "MONTHLY SCREENING SUMMARY"
+          echo "=========================================="
+
+          if [ -f "screening_results_classification.pkl" ]; then
+            echo "[OK] Screening completed successfully"
+            echo ""
+
+            # Show summary using Python
+            python << 'EOF'
+          import pandas as pd
+
+          try:
+              results = pd.read_pickle('screening_results_classification.pkl')
+              print(f"[SUMMARY]")
+              print(f"Total stocks: {len(results)}")
+              print(f"Strong Buy (prob ≥70%): {sum(results['Category'] == 'Strong Buy')}")
+              print(f"Buy (prob 55-70%): {sum(results['Category'] == 'Buy')}")
+              print(f"Neutral (prob 45-55%): {sum(results['Category'] == 'Neutral')}")
+              print(f"Sell (prob 30-45%): {sum(results['Category'] == 'Sell')}")
+              print(f"Strong Sell (prob <30%): {sum(results['Category'] == 'Strong Sell')}")
+              print(f"")
+              print(f"Mean probability: {results['Predicted_Probability'].mean():.1%}")
+              print(f"Predicted UP: {sum(results['Predicted_Direction'] == 1)} ({sum(results['Predicted_Direction'] == 1)/len(results)*100:.1f}%)")
+              print(f"")
+              print(f"[TOP 5 RECOMMENDATIONS]")
+              for i, row in results.head(5).iterrows():
+                  direction = "UP" if row['Predicted_Direction'] == 1 else "DOWN"
+                  print(f"{row['Rank']:2d}. {row['Ticker']:15s} {direction:4s} (Prob: {row['Predicted_Probability']:.1%})")
+          except Exception as e:
+              print(f"Could not load results: {e}")
+          EOF
+          else
+            echo "[FAILED] Screening did not complete"
+          fi
