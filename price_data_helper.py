@@ -46,12 +46,15 @@ class PriceDataHelper:
         Returns:
             Series of returns (%) for each quarter
         """
+        # Check in-memory cache first
         if ticker in self.cache:
             prices = self.cache[ticker]
         else:
+            # Fetch from external cache or yfinance
             prices = self._fetch_price_data(ticker)
             if prices is None or prices.empty:
                 return pd.Series([np.nan] * len(quarter_dates), index=quarter_dates.index)
+            # Store in session cache for this run
             self.cache[ticker] = prices
 
         returns = []
@@ -171,7 +174,7 @@ class PriceDataHelper:
             self.use_cache = False
 
     def _get_price_near_date(self, prices: pd.DataFrame, target_date: pd.Timestamp,
-                            tolerance_days: int = 10) -> Optional[float]:
+                            tolerance_days: int = 10, verbose: bool = False) -> Optional[float]:
         """
         Get price closest to target date (within tolerance)
 
@@ -179,6 +182,7 @@ class PriceDataHelper:
             prices: DataFrame with DatetimeIndex and Close column
             target_date: Target date
             tolerance_days: Maximum days to search before/after
+            verbose: Print error details for debugging
 
         Returns:
             Price (float) or None
@@ -198,10 +202,13 @@ class PriceDataHelper:
                 return None
 
             # Get price closest to target
-            idx = (nearby.index - target_date).abs().argmin()
-            return nearby.iloc[idx]['Close']
+            time_diffs = abs(nearby.index - target_date)  # Use Python's abs() function
+            idx = time_diffs.argmin()
+            return float(nearby.iloc[idx]['Close'])
 
         except Exception as e:
+            if verbose:
+                print(f"      [DEBUG] _get_price_near_date error: {type(e).__name__}: {str(e)}")
             return None
 
     def clear_cache(self):
