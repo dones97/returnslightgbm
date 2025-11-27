@@ -63,6 +63,17 @@ class ScreenerDataCollector:
         quarterly['quarter_date'] = pd.to_datetime(quarterly['quarter_date'], errors='coerce')
         quarterly = quarterly.sort_values('quarter_date').reset_index(drop=True)
 
+        # Convert numeric columns from object/string to float
+        numeric_columns = [
+            'sales', 'expenses', 'operating_profit', 'opm_percent', 'other_income',
+            'interest', 'depreciation', 'profit_before_tax', 'tax_percent',
+            'net_profit', 'eps', 'equity'
+        ]
+
+        for col in numeric_columns:
+            if col in quarterly.columns:
+                quarterly[col] = pd.to_numeric(quarterly[col], errors='coerce')
+
         return quarterly
 
     def get_annual_data(self, ticker: str) -> Dict[str, pd.DataFrame]:
