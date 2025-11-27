@@ -20,7 +20,7 @@ from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import pickle
 from typing import Tuple, Dict
 import random
-from data_collector_monthly import MonthlyDataCollector
+from data_collector_simple_monthly import SimpleMonthlyCollector
 from price_data_helper import PriceDataHelper
 from price_technical_indicators import TechnicalIndicators
 import warnings
@@ -39,7 +39,7 @@ class MonthlyModelTrainer:
             use_price_cache: If True, use cached price data
         """
         self.db_path = db_path
-        self.collector = MonthlyDataCollector(db_path)
+        self.collector = SimpleMonthlyCollector(db_path)
         self.price_helper = PriceDataHelper(use_cache=use_price_cache)
         self.technical_indicators = TechnicalIndicators(use_cache=use_price_cache)
         self.model = None
@@ -198,8 +198,8 @@ class MonthlyModelTrainer:
         print(f"    Valid return data: {after_drop}/{before_drop} months")
         print(f"    Dropped: {before_drop - after_drop} months (no price data)")
 
-        if len(training_data) < 1000:
-            raise ValueError(f"Insufficient data for training! Only {len(training_data)} months. Need at least 1000.")
+        if len(training_data) < 100:
+            raise ValueError(f"Insufficient data for training! Only {len(training_data)} months. Need at least 100.")
 
         # Print statistics about the returns
         print(f"\n[5] Target variable statistics:")
@@ -361,10 +361,12 @@ def main():
     # Initialize trainer
     trainer = MonthlyModelTrainer(db_path='screener_data.db', use_price_cache=use_cache)
 
-    # Prepare data (10 years of monthly data for 500 stocks)
+    # Prepare data (8 years of monthly data for 500 best stocks)
+    # Note: Use 8 years (2016-2024) as database has excellent annual data going back 12 years
+    # Quarterly data only goes back 3 years, but annual fundamentals are complete
     X, y = trainer.prepare_training_data(
         n_stocks=500,
-        start_date='2014-12-31',  # 10 years ago
+        start_date='2016-12-31',  # 8 years ago (all stocks have annual data from here)
         end_date='2024-11-30',     # Latest month
         random_seed=42
     )
