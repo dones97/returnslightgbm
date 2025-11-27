@@ -29,17 +29,18 @@ warnings.filterwarnings('ignore')
 class ScreenerModelTrainer:
     """Train LightGBM model using screener.in database + price-based technical indicators"""
 
-    def __init__(self, db_path: str = 'screener_data.db'):
+    def __init__(self, db_path: str = 'screener_data.db', use_price_cache: bool = False):
         """
         Initialize trainer
 
         Args:
             db_path: Path to screener.in SQLite database
+            use_price_cache: If True, use cached price data instead of fetching from yfinance
         """
         self.db_path = db_path
         self.collector = ScreenerDataCollector(db_path)
-        self.price_helper = PriceDataHelper()
-        self.technical_indicators = TechnicalIndicators()
+        self.price_helper = PriceDataHelper(use_cache=use_price_cache)
+        self.technical_indicators = TechnicalIndicators(use_cache=use_price_cache)
         self.model = None
         self.feature_names = None
         self.feature_importance = None
@@ -146,6 +147,7 @@ class ScreenerModelTrainer:
 
         success_count = 0
         fail_count = 0
+        debug_limit = 5  # Print detailed errors for first 5 failures
 
         for i, ticker in enumerate(unique_stocks, 1):
             if i % 50 == 0:
@@ -160,6 +162,13 @@ class ScreenerModelTrainer:
                     ticker, stock_data['quarter_date']
                 )
 
+                # Log first few failures with details
+                if fail_count < debug_limit and (all(pd.isna(r) for r in returns)):
+                    print(f"      [DEBUG] Failed to get returns for {ticker} - testing fetch directly...")
+                    test_prices = self.price_helper._fetch_price_data(ticker, verbose=True)
+                    if test_prices is None:
+                        print(f"      [DEBUG] _fetch_price_data returned None for {ticker}")
+
                 all_returns.extend(returns.tolist())
 
                 # Check if any valid returns (not all NaN)
@@ -169,7 +178,8 @@ class ScreenerModelTrainer:
                     fail_count += 1
 
             except Exception as e:
-                print(f"    [WARNING] Error fetching prices for {ticker}: {str(e)}")
+                if fail_count < debug_limit:
+                    print(f"    [WARNING] Error fetching prices for {ticker}: {type(e).__name__}: {str(e)}")
                 # Get this stock's data
                 stock_data = training_data[training_data['ticker'] == ticker].copy()
                 # Add NaN for this stock's returns
@@ -374,12 +384,23 @@ class ScreenerModelTrainer:
 
 def main():
     """Main training pipeline"""
+    import os
+
     print("\n" + "="*80)
     print("LIGHTGBM MODEL TRAINER - SCREENER.IN DATABASE VERSION")
     print("="*80)
 
+    # Check if price cache exists
+    use_cache = os.path.exists('price_cache.pkl')
+
+    if use_cache:
+        print("\n[OK] Found price cache file - will use cached prices")
+    else:
+        print("\n[INFO] No price cache found - will fetch prices from yfinance")
+        print("       (To use cache: run 'python build_price_cache.py' first)")
+
     # Initialize trainer
-    trainer = ScreenerModelTrainer(db_path='screener_data.db')
+    trainer = ScreenerModelTrainer(db_path='screener_data.db', use_price_cache=use_cache)
 
     # Prepare data
     X, y = trainer.prepare_training_data(
