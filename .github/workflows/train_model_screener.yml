@@ -14,6 +14,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history to ensure we get latest commits
+
+      - name: Pull latest changes (including price cache if committed)
+        run: |
+          git pull origin main || echo "Already up to date"
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -35,6 +41,27 @@ jobs:
 
           echo "[OK] Found screener database"
           ls -lh screener_data.db
+
+      - name: Download price cache artifact
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
+        with:
+          workflow: build_price_cache.yml
+          name: price-cache
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: warn
+
+      - name: Check for price cache
+        run: |
+          if [ -f "price_cache.pkl" ]; then
+            echo "[OK] Found price cache"
+            ls -lh price_cache.pkl
+          else
+            echo "[WARNING] price_cache.pkl not found!"
+            echo "Will attempt to fetch prices from yfinance (may fail in GitHub Actions)"
+            echo "Recommendation: Run 'Build Price Data Cache' workflow first"
+          fi
 
       - name: Train model (fundamentals + technical indicators)
         run: python model_trainer_screener.py
