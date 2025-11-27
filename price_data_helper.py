@@ -85,6 +85,59 @@ class PriceDataHelper:
 
         return pd.Series(returns, index=quarter_dates.index)
 
+    def get_monthly_returns(self, ticker: str, month_dates: pd.Series,
+                           forward_months: int = 1) -> pd.Series:
+        """
+        Calculate returns from each month-end date to next month-end
+
+        Args:
+            ticker: Stock ticker (without .NS suffix)
+            month_dates: Series of month-end dates
+            forward_months: Number of months to look forward (default: 1)
+
+        Returns:
+            Series of returns (%) for each month
+        """
+        # Check in-memory cache first
+        if ticker in self.cache:
+            prices = self.cache[ticker]
+        else:
+            # Fetch from external cache or yfinance
+            prices = self._fetch_price_data(ticker)
+            if prices is None or prices.empty:
+                return pd.Series([np.nan] * len(month_dates), index=month_dates.index)
+            # Store in session cache for this run
+            self.cache[ticker] = prices
+
+        returns = []
+
+        for month_date in month_dates:
+            try:
+                # Get price at month end
+                start_price = self._get_price_near_date(prices, month_date)
+
+                if start_price is None:
+                    returns.append(np.nan)
+                    continue
+
+                # Get price at next month end (approximately 30 days later)
+                from dateutil.relativedelta import relativedelta
+                future_date = month_date + relativedelta(months=forward_months)
+                end_price = self._get_price_near_date(prices, future_date)
+
+                if end_price is None:
+                    returns.append(np.nan)
+                    continue
+
+                # Calculate return
+                ret = ((end_price - start_price) / start_price) * 100
+                returns.append(ret)
+
+            except Exception as e:
+                returns.append(np.nan)
+
+        return pd.Series(returns, index=month_dates.index)
+
     def _fetch_price_data(self, ticker: str, verbose: bool = False) -> Optional[pd.DataFrame]:
         """
         Fetch historical price data from yfinance or cache
