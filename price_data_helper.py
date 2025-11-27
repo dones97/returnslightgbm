@@ -17,8 +17,21 @@ warnings.filterwarnings('ignore')
 class PriceDataHelper:
     """Helper to fetch price data and calculate returns"""
 
-    def __init__(self):
-        self.cache = {}  # Cache price data to avoid repeated API calls
+    def __init__(self, use_cache: bool = False, cache_path: str = 'price_cache.pkl'):
+        """
+        Initialize helper
+
+        Args:
+            use_cache: If True, load prices from cache file instead of fetching
+            cache_path: Path to cache file
+        """
+        self.cache = {}  # In-memory cache for this session
+        self.use_cache = use_cache
+        self.cache_path = cache_path
+        self.external_cache = None  # Loaded from file
+
+        if use_cache:
+            self._load_cache()
 
     def get_quarterly_returns(self, ticker: str, quarter_dates: pd.Series,
                              forward_periods: int = 1) -> pd.Series:
@@ -69,16 +82,27 @@ class PriceDataHelper:
 
         return pd.Series(returns, index=quarter_dates.index)
 
-    def _fetch_price_data(self, ticker: str) -> Optional[pd.DataFrame]:
+    def _fetch_price_data(self, ticker: str, verbose: bool = False) -> Optional[pd.DataFrame]:
         """
-        Fetch historical price data from yfinance
+        Fetch historical price data from yfinance or cache
 
         Args:
             ticker: Stock ticker (without .NS suffix)
+            verbose: Print error details for debugging
 
         Returns:
             DataFrame with Date index and Close prices
         """
+        # Check external cache first (if using cache mode)
+        if self.use_cache and self.external_cache is not None:
+            if ticker in self.external_cache:
+                return self.external_cache[ticker]
+            else:
+                if verbose:
+                    print(f"      [DEBUG] {ticker}: Not found in cache")
+                return None
+
+        # Fetch from yfinance
         try:
             import time
 
@@ -98,6 +122,8 @@ class PriceDataHelper:
             hist = stock.history(period="3y", timeout=15, raise_errors=False)
 
             if hist is None or hist.empty:
+                if verbose:
+                    print(f"      [DEBUG] {yf_ticker}: Empty or None result from yfinance")
                 return None
 
             # Keep only Close prices
@@ -112,8 +138,37 @@ class PriceDataHelper:
             return prices
 
         except Exception as e:
-            # Silently fail and return None - this is expected for some stocks
+            # Log error if verbose
+            if verbose:
+                print(f"      [DEBUG] {ticker}.NS: {type(e).__name__}: {str(e)}")
             return None
+
+    def _load_cache(self):
+        """Load price cache from file"""
+        try:
+            import pickle
+            import os
+
+            if not os.path.exists(self.cache_path):
+                print(f"[WARNING] Cache file not found: {self.cache_path}")
+                print(f"          Will fetch prices from yfinance instead")
+                self.use_cache = False
+                return
+
+            with open(self.cache_path, 'rb') as f:
+                cache_data = pickle.load(f)
+
+            self.external_cache = cache_data['prices']
+
+            print(f"[OK] Loaded price cache from: {self.cache_path}")
+            print(f"     Build date: {cache_data['build_date']}")
+            print(f"     Stocks cached: {cache_data['successful_stocks']}/{cache_data['total_stocks']} "
+                  f"({cache_data['success_rate']*100:.1f}%)")
+
+        except Exception as e:
+            print(f"[ERROR] Failed to load cache: {str(e)}")
+            print(f"        Will fetch prices from yfinance instead")
+            self.use_cache = False
 
     def _get_price_near_date(self, prices: pd.DataFrame, target_date: pd.Timestamp,
                             tolerance_days: int = 10) -> Optional[float]:
