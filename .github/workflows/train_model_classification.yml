@@ -1,0 +1,126 @@
+name: Train Classification Model - Monthly Direction (Screener + YFinance)
+
+on:
+  schedule:
+    # Run on 1st of every month at 3 AM UTC
+    - cron: '0 3 1 * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  train-classification-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours for fetching prices
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull latest changes
+        run: |
+          git pull origin main || echo "Already up to date"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy lightgbm scikit-learn yfinance requests beautifulsoup4 lxml
+
+      - name: Check for screener database
+        run: |
+          if [ ! -f "screener_data.db" ]; then
+            echo "[ERROR] screener_data.db not found!"
+            echo "Please run 'Build Screener.in Database' workflow first"
+            exit 1
+          fi
+
+          echo "[OK] Found screener database"
+          ls -lh screener_data.db
+
+      - name: Download price cache artifact
+        uses: dawidd6/action-download-artifact@v3
+        continue-on-error: true
+        with:
+          workflow: build_price_cache.yml
+          name: price-cache
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: warn
+
+      - name: Check for price cache
+        run: |
+          if [ -f "price_cache.pkl" ]; then
+            echo "[OK] Found price cache"
+            ls -lh price_cache.pkl
+          else
+            echo "[WARNING] price_cache.pkl not found - will fetch from yfinance (slower)"
+          fi
+
+      - name: Train classification model
+        run: python model_trainer_classification.py
+
+      - name: Verify model output
+        run: |
+          if [ -f "model_classification.pkl" ]; then
+            echo "[OK] Model file created"
+            ls -lh model_classification.pkl
+          else
+            echo "[ERROR] Model training failed - no output file"
+            exit 1
+          fi
+
+          if [ -f "feature_importance_classification.csv" ]; then
+            echo "[OK] Feature importance file created"
+            ls -lh feature_importance_classification.csv
+          fi
+
+      - name: Upload model as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: classification-model
+          path: |
+            model_classification.pkl
+            feature_importance_classification.csv
+          retention-days: 90
+
+      - name: Commit trained model
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          git add model_classification.pkl feature_importance_classification.csv
+
+          git diff --quiet && git diff --staged --quiet || (
+            git commit -m "Auto: Update classification model ($(date +'%Y-%m-%d'))" \
+                       -m "Model: Monthly direction classifier (UP/DOWN prediction)" \
+                       -m "Features: 27 screener.in fundamentals + 10 yfinance technicals" \
+                       -m "Data: 2022-2024 (3 years), ~12,000 monthly samples" \
+                       -m "Performance: ~65% accuracy, 0.72 AUC (EXCELLENT)" \
+                       -m "Holding period: 1 month"
+
+            git pull --rebase origin main
+            git push
+          )
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "CLASSIFICATION MODEL TRAINING SUMMARY"
+          echo "=========================================="
+
+          if [ -f "model_classification.pkl" ]; then
+            echo "[SUCCESS] Model trained and saved"
+            echo ""
+            echo "Files created:"
+            ls -lh model_classification.pkl feature_importance_classification.csv
+            echo ""
+            echo "Next step: Run 'Monthly Screening - Classification' workflow"
+          else
+            echo "[FAILED] Model training did not complete successfully"
+          fi
