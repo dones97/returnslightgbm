@@ -1,4 +1,4 @@
-name: Train Model - Screener.in Database
+name: Train Model - Monthly Returns (No Look-Ahead)
 
 on:
   schedule:
@@ -63,14 +63,14 @@ jobs:
             echo "Recommendation: Run 'Build Price Data Cache' workflow first"
           fi
 
-      - name: Train model (fundamentals + technical indicators)
-        run: python model_trainer_screener.py
+      - name: Train model (monthly returns - no look-ahead bias)
+        run: python model_trainer_monthly.py
 
       - name: Upload model as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: trained-model-screener
-          path: trained_model_screener.pkl
+          name: trained-model-monthly
+          path: trained_model_monthly.pkl
           retention-days: 90
 
       - name: Commit trained model
@@ -80,14 +80,14 @@ jobs:
           git config --local user.name "GitHub Action"
 
           # Add model
-          git add trained_model_screener.pkl
+          git add trained_model_monthly.pkl
 
           # Commit if there are changes
           git diff --quiet && git diff --staged --quiet || (
-            git commit -m "Auto: Update trained model - Full Features ($(date +'%Y-%m-%d'))" \
-                       -m "Model trained using fundamentals + price-based technical indicators" \
-                       -m "Features: ROC, RSI, volatility, MA ratios + all fundamentals" \
-                       -m "Target: Next quarter price returns - 500 stocks, 10 quarters"
+            git commit -m "Auto: Update trained model - Monthly Returns ($(date +'%Y-%m-%d'))" \
+                       -m "Model trained using monthly returns (NO LOOK-AHEAD BIAS)" \
+                       -m "Features: Fundamentals (with reporting lag) + technical indicators" \
+                       -m "Target: Next month price returns - 500 stocks, 10 years (120 months)"
 
             # Pull with rebase to avoid conflicts
             git pull --rebase origin main
@@ -100,7 +100,7 @@ jobs:
         if: always()
         run: |
           echo "Training workflow completed"
-          if [ -f "trained_model_screener.pkl" ]; then
+          if [ -f "trained_model_monthly.pkl" ]; then
             echo "[OK] Model file created"
-            ls -lh trained_model_screener.pkl
+            ls -lh trained_model_monthly.pkl
           fi
