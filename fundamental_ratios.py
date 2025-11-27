@@ -130,6 +130,15 @@ class FundamentalRatios:
         """
         features = {}
 
+        # Cap growth rates to prevent extreme outliers from dominating the model
+        MAX_GROWTH = 500  # Cap at ±500%
+
+        def cap_growth(growth):
+            """Cap growth rate to reasonable bounds"""
+            if pd.isna(growth):
+                return np.nan
+            return np.clip(growth, -MAX_GROWTH, MAX_GROWTH)
+
         if idx > 0:  # QoQ growth
             prev = quarterly.iloc[idx - 1]
             curr = quarterly.iloc[idx]
@@ -139,8 +148,9 @@ class FundamentalRatios:
                 prev_val = prev.get(metric, np.nan)
                 curr_val = curr.get(metric, np.nan)
 
-                if pd.notna(prev_val) and pd.notna(curr_val) and prev_val != 0:
-                    features[f'{metric}_growth_qoq'] = ((curr_val - prev_val) / abs(prev_val)) * 100
+                if pd.notna(prev_val) and pd.notna(curr_val) and abs(prev_val) > 0.01:  # Avoid near-zero denominators
+                    growth = ((curr_val - prev_val) / abs(prev_val)) * 100
+                    features[f'{metric}_growth_qoq'] = cap_growth(growth)
                 else:
                     features[f'{metric}_growth_qoq'] = np.nan
 
@@ -153,8 +163,9 @@ class FundamentalRatios:
                 yoy_val = yoy.get(metric, np.nan)
                 curr_val = curr.get(metric, np.nan)
 
-                if pd.notna(yoy_val) and pd.notna(curr_val) and yoy_val != 0:
-                    features[f'{metric}_growth_yoy'] = ((curr_val - yoy_val) / abs(yoy_val)) * 100
+                if pd.notna(yoy_val) and pd.notna(curr_val) and abs(yoy_val) > 0.01:  # Avoid near-zero denominators
+                    growth = ((curr_val - yoy_val) / abs(yoy_val)) * 100
+                    features[f'{metric}_growth_yoy'] = cap_growth(growth)
                 else:
                     features[f'{metric}_growth_yoy'] = np.nan
 
@@ -185,31 +196,42 @@ class FundamentalRatios:
         """
         features = {}
 
+        # Cap acceleration to prevent extreme outliers
+        MAX_ACCELERATION = 200  # Cap at ±200%
+
         # Operating profit growth acceleration (is growth accelerating?)
         if idx >= 2:
-            if pd.notna(quarterly.iloc[idx].get('operating_profit', np.nan)) and \
-               pd.notna(quarterly.iloc[idx-1].get('operating_profit', np.nan)) and \
-               pd.notna(quarterly.iloc[idx-2].get('operating_profit', np.nan)):
+            op_curr = quarterly.iloc[idx].get('operating_profit', np.nan)
+            op_prev1 = quarterly.iloc[idx-1].get('operating_profit', np.nan)
+            op_prev2 = quarterly.iloc[idx-2].get('operating_profit', np.nan)
 
-                curr_growth = (quarterly.iloc[idx]['operating_profit'] - quarterly.iloc[idx-1]['operating_profit']) / \
-                             abs(quarterly.iloc[idx-1]['operating_profit'])
-                prev_growth = (quarterly.iloc[idx-1]['operating_profit'] - quarterly.iloc[idx-2]['operating_profit']) / \
-                             abs(quarterly.iloc[idx-2]['operating_profit'])
+            if pd.notna(op_curr) and pd.notna(op_prev1) and pd.notna(op_prev2) and \
+               abs(op_prev1) > 0.01 and abs(op_prev2) > 0.01:
 
-                features['operating_profit_acceleration'] = (curr_growth - prev_growth) * 100
+                curr_growth = (op_curr - op_prev1) / abs(op_prev1)
+                prev_growth = (op_prev1 - op_prev2) / abs(op_prev2)
+
+                acceleration = (curr_growth - prev_growth) * 100
+                features['operating_profit_acceleration'] = np.clip(acceleration, -MAX_ACCELERATION, MAX_ACCELERATION)
+            else:
+                features['operating_profit_acceleration'] = np.nan
 
         # EPS growth acceleration
         if idx >= 2:
-            if pd.notna(quarterly.iloc[idx].get('eps', np.nan)) and \
-               pd.notna(quarterly.iloc[idx-1].get('eps', np.nan)) and \
-               pd.notna(quarterly.iloc[idx-2].get('eps', np.nan)):
+            eps_curr = quarterly.iloc[idx].get('eps', np.nan)
+            eps_prev1 = quarterly.iloc[idx-1].get('eps', np.nan)
+            eps_prev2 = quarterly.iloc[idx-2].get('eps', np.nan)
 
-                curr_growth = (quarterly.iloc[idx]['eps'] - quarterly.iloc[idx-1]['eps']) / \
-                             abs(quarterly.iloc[idx-1]['eps'] + 0.01)  # Avoid division by zero
-                prev_growth = (quarterly.iloc[idx-1]['eps'] - quarterly.iloc[idx-2]['eps']) / \
-                             abs(quarterly.iloc[idx-2]['eps'] + 0.01)
+            if pd.notna(eps_curr) and pd.notna(eps_prev1) and pd.notna(eps_prev2) and \
+               abs(eps_prev1) > 0.01 and abs(eps_prev2) > 0.01:
 
-                features['eps_acceleration'] = (curr_growth - prev_growth) * 100
+                curr_growth = (eps_curr - eps_prev1) / abs(eps_prev1)
+                prev_growth = (eps_prev1 - eps_prev2) / abs(eps_prev2)
+
+                acceleration = (curr_growth - prev_growth) * 100
+                features['eps_acceleration'] = np.clip(acceleration, -MAX_ACCELERATION, MAX_ACCELERATION)
+            else:
+                features['eps_acceleration'] = np.nan
 
         return features
 
@@ -255,94 +277,123 @@ class FundamentalRatios:
 
         return features
 
-    def calculate_annual_ratios(self, annual_data: Dict) -> Dict:
+    def calculate_annual_ratios(self, annual_data: Dict, quarter_date: pd.Timestamp = None) -> Dict:
         """
         Calculate size-agnostic ratios from annual data
 
         These are CRITICAL - they stay constant for the whole year but are highly predictive!
+
+        Args:
+            annual_data: Dict of annual DataFrames
+            quarter_date: Quarter date to find matching annual data (if None, uses latest)
         """
         features = {}
 
+        # Helper function to get annual data for the correct year
+        def get_annual_for_date(df, date):
+            """Get annual data that would be available at the given date"""
+            if df.empty or date is None:
+                return df.iloc[-1] if not df.empty else None
+
+            # Parse year column and find most recent year before quarter_date
+            # Annual data for FY 2023-24 (Dec 2023) is available after Mar 2024
+            # So we look for annual data at least 3 months before quarter_date
+            cutoff = date - pd.DateOffset(months=3)
+
+            available = df[pd.to_datetime(df['year'], format='%b %Y', errors='coerce') <= cutoff]
+            if available.empty:
+                # If no data available before cutoff, use earliest available
+                return df.iloc[0] if not df.empty else None
+            return available.iloc[-1]
+
         # 1. ROCE from annual_ratios table
         if not annual_data['annual_ratios'].empty:
-            latest = annual_data['annual_ratios'].iloc[-1]
-            features['roce'] = latest.get('roce_percent', np.nan)
-
-            # Working capital efficiency
-            features['cash_conversion_cycle'] = latest.get('cash_conversion_cycle', np.nan)
-            features['working_capital_days'] = latest.get('working_capital_days', np.nan)
-            features['debtor_days'] = latest.get('debtor_days', np.nan)
-            features['inventory_days'] = latest.get('inventory_days', np.nan)
-            features['days_payable'] = latest.get('days_payable', np.nan)
+            latest = get_annual_for_date(annual_data['annual_ratios'], quarter_date)
+            if latest is not None:
+                features['roce'] = latest.get('roce_percent', np.nan)
+                features['cash_conversion_cycle'] = latest.get('cash_conversion_cycle', np.nan)
+                features['working_capital_days'] = latest.get('working_capital_days', np.nan)
+                features['debtor_days'] = latest.get('debtor_days', np.nan)
+                features['inventory_days'] = latest.get('inventory_days', np.nan)
+                features['days_payable'] = latest.get('days_payable', np.nan)
 
         # 2. Balance sheet ratios (size-agnostic!)
         if not annual_data['balance_sheet'].empty:
-            latest_bs = annual_data['balance_sheet'].iloc[-1]
-
-            total_assets = latest_bs.get('total_assets', np.nan)
-            total_liabilities = latest_bs.get('total_liabilities', np.nan)
-            equity_capital = latest_bs.get('equity_capital', np.nan)
-            reserves = latest_bs.get('reserves', np.nan)
-            fixed_assets = latest_bs.get('fixed_assets', np.nan)
-            borrowings = latest_bs.get('borrowings', np.nan)
-
-            # Asset efficiency ratios
-            if pd.notna(total_assets) and total_assets != 0:
-                # Leverage ratio
-                if pd.notna(total_liabilities):
-                    features['leverage_ratio'] = total_liabilities / total_assets
-
-                # Fixed asset ratio
-                if pd.notna(fixed_assets):
-                    features['fixed_asset_ratio'] = fixed_assets / total_assets
-
-            # Equity composition
-            if pd.notna(equity_capital) and pd.notna(reserves):
-                total_equity = equity_capital + reserves
-                if total_equity != 0:
-                    # Reserve ratio (higher = more retained earnings)
-                    features['reserve_ratio'] = reserves / total_equity
-
-        # 3. Cash flow ratios (size-agnostic!)
-        if not annual_data['cash_flow'].empty:
-            latest_cf = annual_data['cash_flow'].iloc[-1]
-            operating_cf = latest_cf.get('cash_from_operating_activity', np.nan)
-            net_cf = latest_cf.get('net_cash_flow', np.nan)
-
-            # Get annual profit for comparison
-            if not annual_data['annual_profit_loss'].empty:
-                latest_pl = annual_data['annual_profit_loss'].iloc[-1]
-                net_profit = latest_pl.get('net_profit', np.nan)
-                operating_profit = latest_pl.get('operating_profit', np.nan)
-
-                # Cash flow quality (operating CF / net profit)
-                # High ratio = good quality earnings (cash-backed)
-                if pd.notna(operating_cf) and pd.notna(net_profit) and net_profit != 0:
-                    features['cf_to_profit_ratio'] = operating_cf / net_profit
-
-                # Free cash flow indicator
-                # Positive net CF = good sign
-                if pd.notna(net_cf):
-                    features['positive_free_cf'] = 1 if net_cf > 0 else 0
-
-        # 4. Annual profit metrics (size-agnostic!)
-        if not annual_data['annual_profit_loss'].empty:
-            latest_pl = annual_data['annual_profit_loss'].iloc[-1]
-
-            # ROE calculation if we have annual data
-            net_profit = latest_pl.get('net_profit', np.nan)
-            if pd.notna(net_profit) and not annual_data['balance_sheet'].empty:
-                latest_bs = annual_data['balance_sheet'].iloc[-1]
+            latest_bs = get_annual_for_date(annual_data['balance_sheet'], quarter_date)
+            if latest_bs is not None:
+                total_assets = latest_bs.get('total_assets', np.nan)
+                total_liabilities = latest_bs.get('total_liabilities', np.nan)
                 equity_capital = latest_bs.get('equity_capital', np.nan)
                 reserves = latest_bs.get('reserves', np.nan)
+                fixed_assets = latest_bs.get('fixed_assets', np.nan)
 
+                # Asset efficiency ratios
+                if pd.notna(total_assets) and total_assets != 0:
+                    # Leverage ratio
+                    if pd.notna(total_liabilities):
+                        features['leverage_ratio'] = total_liabilities / total_assets
+
+                    # Fixed asset ratio
+                    if pd.notna(fixed_assets):
+                        features['fixed_asset_ratio'] = fixed_assets / total_assets
+
+                # Equity composition
                 if pd.notna(equity_capital) and pd.notna(reserves):
                     total_equity = equity_capital + reserves
                     if total_equity != 0:
-                        features['roe'] = (net_profit / total_equity) * 100
+                        # Reserve ratio (higher = more retained earnings)
+                        features['reserve_ratio'] = reserves / total_equity
 
-            # Dividend payout ratio
-            features['dividend_payout'] = latest_pl.get('dividend_payout_percent', np.nan)
+        # 3. Cash flow ratios (size-agnostic!)
+        if not annual_data['cash_flow'].empty and not annual_data['annual_profit_loss'].empty:
+            latest_cf = get_annual_for_date(annual_data['cash_flow'], quarter_date)
+            latest_pl = get_annual_for_date(annual_data['annual_profit_loss'], quarter_date)
+
+            if latest_cf is not None and latest_pl is not None:
+                operating_cf = latest_cf.get('cash_from_operating_activity', np.nan)
+                net_cf = latest_cf.get('net_cash_flow', np.nan)
+                net_profit = latest_pl.get('net_profit', np.nan)
+
+                # Cash flow quality (operating CF / net profit)
+                if pd.notna(operating_cf) and pd.notna(net_profit) and abs(net_profit) > 0:
+                    features['cf_to_profit_ratio'] = operating_cf / net_profit
+                else:
+                    features['cf_to_profit_ratio'] = np.nan
+
+                # Free cash flow indicator
+                if pd.notna(net_cf):
+                    features['positive_free_cf'] = 1 if net_cf > 0 else 0
+                else:
+                    features['positive_free_cf'] = 0
+
+        # 4. Annual profit metrics (size-agnostic!)
+        if not annual_data['annual_profit_loss'].empty:
+            latest_pl = get_annual_for_date(annual_data['annual_profit_loss'], quarter_date)
+
+            if latest_pl is not None:
+                # ROE calculation if we have annual data
+                net_profit = latest_pl.get('net_profit', np.nan)
+                if pd.notna(net_profit) and not annual_data['balance_sheet'].empty:
+                    latest_bs = get_annual_for_date(annual_data['balance_sheet'], quarter_date)
+                    if latest_bs is not None:
+                        equity_capital = latest_bs.get('equity_capital', np.nan)
+                        reserves = latest_bs.get('reserves', np.nan)
+
+                        if pd.notna(equity_capital) and pd.notna(reserves):
+                            total_equity = equity_capital + reserves
+                            if total_equity != 0:
+                                features['roe'] = (net_profit / total_equity) * 100
+                            else:
+                                features['roe'] = np.nan
+                        else:
+                            features['roe'] = np.nan
+                    else:
+                        features['roe'] = np.nan
+                else:
+                    features['roe'] = np.nan
+
+                # Dividend payout ratio
+                features['dividend_payout'] = latest_pl.get('dividend_payout_percent', np.nan)
 
         return features
 
@@ -465,6 +516,7 @@ class FundamentalRatios:
 
         annual_data = self.get_annual_data(ticker)
         curr_quarter = quarterly.iloc[quarter_idx]
+        quarter_date = curr_quarter['quarter_date']
 
         # Combine all ratio categories
         ratios = {}
@@ -485,6 +537,7 @@ class FundamentalRatios:
         ratios.update(self.calculate_quality_scores(quarterly, quarter_idx, annual_data))
 
         # 6. Annual ratios (CRITICAL - balance sheet, cash flow, working capital)
-        ratios.update(self.calculate_annual_ratios(annual_data))
+        # Pass quarter_date to match annual data to correct time period
+        ratios.update(self.calculate_annual_ratios(annual_data, quarter_date))
 
         return ratios
