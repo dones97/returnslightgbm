@@ -372,23 +372,63 @@ class MultiModelScreener:
         st.markdown("---")
         st.markdown("## 📊 Screening Results")
 
+        # Detect column names (handle different formats)
+        has_category = 'Category' in results.columns
+        has_predicted_prob = 'Predicted_Probability' in results.columns
+        has_predicted_prob_lower = 'predicted_probability' in results.columns
+        has_predicted_direction = 'Predicted_Direction' in results.columns
+        has_quality_quintile = 'quality_quintile' in results.columns
+
+        # Normalize column names if needed
+        if has_predicted_prob_lower and not has_predicted_prob:
+            results['Predicted_Probability'] = results['predicted_probability']
+            has_predicted_prob = True
+
+        # Create Category column if missing (for YFinance model)
+        if not has_category and has_predicted_prob:
+            results['Category'] = 'Neutral'
+            results.loc[results['Predicted_Probability'] >= 0.70, 'Category'] = 'Strong Buy'
+            results.loc[(results['Predicted_Probability'] >= 0.55) & (results['Predicted_Probability'] < 0.70), 'Category'] = 'Buy'
+            results.loc[(results['Predicted_Probability'] < 0.45) & (results['Predicted_Probability'] >= 0.30), 'Category'] = 'Sell'
+            results.loc[results['Predicted_Probability'] < 0.30, 'Category'] = 'Strong Sell'
+            has_category = True
+
+        # Create Predicted_Direction if missing
+        if not has_predicted_direction and has_predicted_prob:
+            results['Predicted_Direction'] = (results['Predicted_Probability'] > 0.5).astype(int)
+            has_predicted_direction = True
+
+        # Create Confidence if missing
+        if 'Confidence' not in results.columns and has_predicted_prob:
+            results['Confidence'] = abs(results['Predicted_Probability'] - 0.5) * 2
+
         # Summary metrics
         col1, col2, col3, col4, col5 = st.columns(5)
 
         with col1:
             st.metric("Total Stocks", len(results))
         with col2:
-            strong_buy = sum(results['Category'] == 'Strong Buy')
-            st.metric("Strong Buy", strong_buy)
+            if has_category:
+                strong_buy = sum(results['Category'] == 'Strong Buy')
+                st.metric("Strong Buy", strong_buy)
+            elif has_quality_quintile:
+                q5 = sum(results['quality_quintile'] == 'Q5 (Highest)')
+                st.metric("Q5 (Highest)", q5)
         with col3:
-            buy = sum(results['Category'] == 'Buy')
-            st.metric("Buy", buy)
+            if has_category:
+                buy = sum(results['Category'] == 'Buy')
+                st.metric("Buy", buy)
+            elif has_quality_quintile:
+                q4 = sum(results['quality_quintile'] == 'Q4 (High)')
+                st.metric("Q4 (High)", q4)
         with col4:
-            mean_prob = results['Predicted_Probability'].mean()
-            st.metric("Avg Probability", f"{mean_prob:.1%}")
+            if has_predicted_prob:
+                mean_prob = results['Predicted_Probability'].mean()
+                st.metric("Avg Probability", f"{mean_prob:.1%}")
         with col5:
-            predicted_up = sum(results['Predicted_Direction'] == 1)
-            st.metric("Predicted UP", f"{predicted_up/len(results)*100:.0f}%")
+            if has_predicted_direction:
+                predicted_up = sum(results['Predicted_Direction'] == 1)
+                st.metric("Predicted UP", f"{predicted_up/len(results)*100:.0f}%")
 
         # Filter options
         st.markdown("### 🔎 Filter Results")
@@ -667,8 +707,12 @@ class MultiModelScreener:
             # Sort stocks by predicted probability (or return) for easier selection
             if 'Predicted_Probability' in results.columns:
                 sorted_results = results.sort_values('Predicted_Probability', ascending=False)
+            elif 'predicted_probability' in results.columns:
+                sorted_results = results.sort_values('predicted_probability', ascending=False)
             elif 'Predicted_Return' in results.columns:
                 sorted_results = results.sort_values('Predicted_Return', ascending=False)
+            elif 'composite_score' in results.columns:
+                sorted_results = results.sort_values('composite_score', ascending=False)
             else:
                 sorted_results = results
 
@@ -693,23 +737,55 @@ class MultiModelScreener:
             # Key prediction metrics at top
             st.markdown("#### 🎯 Model Prediction")
 
+            # Detect which probability column exists
+            prob_col = None
             if 'Predicted_Probability' in stock_data:
+                prob_col = 'Predicted_Probability'
+            elif 'predicted_probability' in stock_data:
+                prob_col = 'predicted_probability'
+
+            if prob_col:
+                # Get or create required columns
+                prob = stock_data[prob_col]
+
+                if 'Predicted_Direction' in stock_data:
+                    direction_val = stock_data['Predicted_Direction']
+                else:
+                    direction_val = 1 if prob > 0.5 else 0
+
+                if 'Confidence' in stock_data:
+                    conf = stock_data['Confidence']
+                else:
+                    conf = abs(prob - 0.5) * 2
+
+                if 'Category' in stock_data:
+                    cat = stock_data['Category']
+                else:
+                    # Derive category from probability
+                    if prob >= 0.70:
+                        cat = 'Strong Buy'
+                    elif prob >= 0.55:
+                        cat = 'Buy'
+                    elif prob >= 0.45:
+                        cat = 'Neutral'
+                    elif prob >= 0.30:
+                        cat = 'Sell'
+                    else:
+                        cat = 'Strong Sell'
+
                 cols = st.columns(5)
 
                 with cols[0]:
-                    direction = "UP ⬆️" if stock_data['Predicted_Direction'] == 1 else "DOWN ⬇️"
+                    direction = "UP ⬆️" if direction_val == 1 else "DOWN ⬇️"
                     st.metric("Predicted Direction", direction)
 
                 with cols[1]:
-                    prob = stock_data['Predicted_Probability']
                     st.metric("Probability", f"{prob:.1%}")
 
                 with cols[2]:
-                    conf = stock_data['Confidence']
                     st.metric("Confidence", f"{conf:.1%}")
 
                 with cols[3]:
-                    cat = stock_data['Category']
                     st.metric("Category", cat)
 
                 with cols[4]:
@@ -786,11 +862,13 @@ class MultiModelScreener:
                 metrics = {}
 
                 for col in ['trailing_pe', 'forward_pe', 'price_to_book', 'enterprise_to_ebitda',
-                           'roe', 'roa', 'profit_margin', 'opm', 'opm_percent']:
+                           'roe', 'roa', 'profit_margin', 'opm', 'opm_percent',
+                           'ROE', 'ROA', 'Gross_Margin', 'Operating_Margin', 'Net_Margin', 'EBITDA_Margin',
+                           'Current_Ratio', 'Quick_Ratio', 'Debt_to_Equity', 'Debt_to_Assets']:
                     if col in stock_data and pd.notna(stock_data[col]):
                         label = col.replace('_', ' ').title()
                         value = stock_data[col]
-                        if col in ['roe', 'roa', 'profit_margin']:
+                        if col in ['roe', 'roa', 'profit_margin', 'ROE', 'ROA', 'Gross_Margin', 'Operating_Margin', 'Net_Margin', 'EBITDA_Margin']:
                             st.text(f"{label}: {value:.2%}")
                         elif col in ['opm_percent']:
                             st.text(f"OPM: {value:.2f}%")
@@ -802,9 +880,12 @@ class MultiModelScreener:
 
                 for col in ['sales_growth_yoy', 'Sales_Growth_YoY', 'profit_growth_yoy',
                            'Profit_Growth_YoY', 'revenue_growth', 'earnings_growth',
-                           'roc_1m', 'roc_3m', 'roc_6m', 'roc_12m']:
+                           'roc_1m', 'roc_3m', 'roc_6m', 'roc_12m',
+                           'ROC_1M', 'ROC_3M', 'ROC_6M', 'ROC_12M',
+                           'Revenue_Growth_QoQ', 'Revenue_Growth_YoY', 'Net_Income_Growth_QoQ',
+                           'Net_Income_Growth_YoY', 'EBITDA_Growth_YoY']:
                     if col in stock_data and pd.notna(stock_data[col]):
-                        label = col.replace('_', ' ').replace('YoY', 'YoY').replace('yoy', 'YoY').title()
+                        label = col.replace('_', ' ').replace('YoY', 'YoY').replace('yoy', 'YoY').replace('QoQ', 'QoQ').title()
                         value = stock_data[col]
                         st.text(f"{label}: {value:+.2f}%")
 
@@ -813,12 +894,16 @@ class MultiModelScreener:
 
                 for col in ['debt_to_equity', 'current_ratio', 'beta',
                            'volatility_30d', 'volatility_90d', 'rsi_14d',
-                           'price_to_ma50', 'price_to_ma200']:
+                           'price_to_ma50', 'price_to_ma200',
+                           'Volatility_60', 'RSI', 'Volume_Ratio',
+                           'F_Score', 'Z_Score', 'dividend_yield']:
                     if col in stock_data and pd.notna(stock_data[col]):
                         label = col.replace('_', ' ').title()
                         value = stock_data[col]
-                        if col in ['volatility_30d', 'volatility_90d']:
+                        if col in ['volatility_30d', 'volatility_90d', 'Volatility_60']:
                             st.text(f"{label}: {value:.2f}%")
+                        elif col in ['dividend_yield']:
+                            st.text(f"{label}: {value:.2%}")
                         else:
                             st.text(f"{label}: {value:.2f}")
 
