@@ -44,23 +44,24 @@ class SimpleMonthlyCollector:
         """
         Find which quarterly index to use for this month
 
-        Rule: Use most recent quarter that was REPORTED by month_end
-        (Quarter + 45 days for reporting)
+        Rule: Use most recent quarter that ENDED before month_end - 45 days
+        (45-day reporting lag to prevent look-ahead bias)
         """
         quarterly = self.ratio_calculator.get_quarterly_data(ticker)
 
         if quarterly.empty:
             return -1
 
-        # Find quarters reported before month_end
-        reported_dates = quarterly['quarter_date'] + timedelta(days=45)
-        available = quarterly[reported_dates <= month_end]
+        # Find quarters that ended at least 45 days before month_end
+        # This prevents look-ahead bias while allowing historical backtesting
+        cutoff_date = month_end - timedelta(days=45)
+        available = quarterly[quarterly['quarter_date'] <= cutoff_date]
 
         if available.empty:
             return -1
 
-        # Return index of most recent quarter
-        return len(quarterly[quarterly['quarter_date'] <= available.iloc[-1]['quarter_date']]) - 1
+        # Return index of most recent available quarter
+        return len(available) - 1
 
     def prepare_monthly_data(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
         """
