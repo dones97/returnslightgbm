@@ -1,0 +1,69 @@
+name: Train Annual Classification Model
+
+on:
+  schedule:
+    # Run on the 1st of every month at 4 AM UTC
+    - cron: '0 4 1 * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  train-annual-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy lightgbm scikit-learn yfinance requests beautifulsoup4 lxml
+
+      - name: Download price cache (if available)
+        continue-on-error: true
+        run: |
+          gh release download price-cache --pattern 'price_cache_*.pkl' || echo "No price cache available"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Train annual classification model
+        run: |
+          python model_trainer_annual_classification.py
+        env:
+          PYTHONUNBUFFERED: 1
+
+      - name: Upload trained model as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: annual-model
+          path: |
+            model_annual_classification.pkl
+            feature_importance_annual_classification.csv
+          retention-days: 90
+
+      - name: Commit model to repository
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add model_annual_classification.pkl feature_importance_annual_classification.csv
+          git diff --quiet && git diff --staged --quiet || git commit -m "Auto: Update annual classification model ($(date +'%Y-%m-%d'))"
+          git push
+
+      - name: Upload price cache for next run
+        continue-on-error: true
+        run: |
+          if [ -f "price_cache_*.pkl" ]; then
+            gh release upload price-cache price_cache_*.pkl --clobber || \
+            gh release create price-cache price_cache_*.pkl --title "Price Cache" --notes "Cached price data"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
