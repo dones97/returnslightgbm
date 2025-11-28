@@ -105,13 +105,26 @@ MODEL_CONFIGS = {
         "results_file": "screening_results.pkl",
         "model_file": "trained_model.pkl",
         "feature_importance_file": "feature_importance.csv",
-        "description": "Original model using yfinance data only",
-        "features": "Fundamentals + technicals from yfinance",
-        "accuracy": "Varies",
-        "auc": "N/A",
+        "description": "Original model using yfinance fundamentals and technical indicators only",
+        "features": "~50+ features (fundamentals, growth, technicals)",
+        "accuracy": "~54-58% (typical)",
+        "auc": "~0.55-0.60 (typical)",
         "target": "Next month return direction",
-        "data_period": "Historical",
-        "samples": "Varies"
+        "data_period": "5-10 years historical",
+        "samples": "~10,000-50,000 (varies by stocks)"
+    },
+    "Screener Annual Model": {
+        "type": "classification",
+        "results_file": "screening_results_annual.pkl",
+        "model_file": "model_annual_classification.pkl",
+        "feature_importance_file": "feature_importance_annual_classification.csv",
+        "description": "Annual model using screener fundamentals + light technicals for 1-year predictions",
+        "features": "20 features (14 fundamentals + 6 technicals)",
+        "accuracy": "57.1%",
+        "auc": "0.64",
+        "target": "1-year return direction",
+        "data_period": "2013-2023 (10 years)",
+        "samples": "~3,500"
     }
 }
 
@@ -195,8 +208,17 @@ class MultiModelScreener:
 
         try:
             with open(model_file, 'rb') as f:
-                model = pickle.load(f)
-            return model
+                model_data = pickle.load(f)
+
+            # Handle dictionary format (YFinance model stores as dict)
+            if isinstance(model_data, dict):
+                if 'model' in model_data:
+                    return model_data['model']
+                else:
+                    return model_data
+            else:
+                # Direct model object (classification model)
+                return model_data
         except Exception as e:
             st.warning(f"Could not load model: {str(e)}")
             return None
@@ -218,6 +240,35 @@ class MultiModelScreener:
         """Display model performance metrics and feature importance"""
         st.markdown("---")
         st.markdown("## 📊 Model Performance & Feature Importance")
+
+        # Check if we have actual model data or just config
+        has_model_data = model is not None or feature_importance is not None
+
+        # If no model/importance, try to extract from model if it exists
+        if model is not None and feature_importance is None:
+            try:
+                # Try to extract feature importance from model
+                if hasattr(model, 'feature_importance'):
+                    importance = model.feature_importance(importance_type='gain')
+                    features = model.feature_name()
+                    feature_importance = pd.DataFrame({
+                        'feature': features,
+                        'importance': importance
+                    }).sort_values('importance', ascending=False)
+                elif hasattr(model, 'feature_importances_'):
+                    importance = model.feature_importances_
+                    if hasattr(model, 'feature_name_'):
+                        features = model.feature_name_
+                    elif hasattr(model, 'feature_names_in_'):
+                        features = model.feature_names_in_
+                    else:
+                        features = [f'feature_{i}' for i in range(len(importance))]
+                    feature_importance = pd.DataFrame({
+                        'feature': features,
+                        'importance': importance
+                    }).sort_values('importance', ascending=False)
+            except Exception as e:
+                pass
 
         # Performance metrics
         if self.selected_model['type'] == 'classification':
@@ -243,15 +294,18 @@ class MultiModelScreener:
                 st.markdown("""
                 **Accuracy:** Percentage of predictions that were correct
                 - 50% = Random guessing (baseline)
-                - 65.5% = **Excellent** for stock prediction (15.5 points above random!)
-                - Professional hedge funds typically achieve 52-58%
+                - 54-58% = **Good** for stock prediction (professional standard)
+                - 60-65% = **Excellent** for stock prediction (rare!)
+                - >65% = **Outstanding** (very rare, top-tier performance)
 
                 **AUC-ROC (Area Under Curve):** Measures how well model separates UP from DOWN
                 - 0.50 = Random (no signal)
-                - 0.72 = **Strong signal** - model has real predictive power
-                - >0.70 = Considered excellent for stocks
+                - 0.55-0.60 = Weak signal (usable)
+                - 0.60-0.70 = Moderate signal (good)
+                - 0.70-0.80 = **Strong signal** (excellent)
+                - >0.80 = Outstanding (rare for stocks)
 
-                **Why 65% is great:** Even a 55% accuracy model, compounded monthly over a year,
+                **Why even 55% is valuable:** A 55% accuracy model, compounded monthly over a year,
                 provides significant outperformance vs. random stock selection!
                 """)
 
@@ -304,6 +358,20 @@ class MultiModelScreener:
                     use_container_width=True,
                     height=400
                 )
+        else:
+            # Show message when feature importance is not available
+            st.markdown("### ⭐ Feature Importance")
+            st.info("""
+            **Feature importance data not available for this model.**
+
+            This can happen when:
+            - The model was trained without saving feature importance
+            - The feature_importance CSV file is missing
+            - The model file doesn't contain importance data
+
+            💡 **To view feature importance:** Re-run the model training workflow, which will
+            generate the feature_importance CSV file.
+            """)
 
     def explain_probability_confidence(self):
         """Explain what probability and confidence mean"""
