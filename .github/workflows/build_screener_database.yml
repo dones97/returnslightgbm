@@ -195,29 +195,80 @@ jobs:
             git push
           )
 
-      - name: Cleanup
-        if: always()
+      - name: Clean and standardize database
+        if: success()
         run: |
-          echo "Workflow completed"
-          if [ -f "screener_data.db" ]; then
-            ls -lh screener_data.db
+          echo "Running database cleanup..."
+          python database_cleanup.py
 
-            # Show sample data
-            python << 'EOF'
+      - name: Validate database
+        if: success()
+        run: |
+          python << 'EOF'
           import sqlite3
           import pandas as pd
 
+          print("\n" + "="*80)
+          print("DATABASE VALIDATION")
+          print("="*80)
+
           conn = sqlite3.connect('screener_data.db')
+
+          # Overall stats
           stats = pd.read_sql_query("""
               SELECT
                   COUNT(*) as total_stocks,
                   SUM(CASE WHEN data_available = 1 THEN 1 ELSE 0 END) as with_data
               FROM companies
           """, conn)
-          conn.close()
 
-          print("\n[DATABASE STATS]")
+          print(f"\n[OVERVIEW]")
           print(f"Total stocks: {stats['total_stocks'].iloc[0]}")
           print(f"With data: {stats['with_data'].iloc[0]}")
+
+          # Data coverage
+          coverage = pd.read_sql_query("""
+              SELECT
+                  (SELECT COUNT(DISTINCT ticker) FROM annual_profit_loss) as stocks_with_pl,
+                  (SELECT COUNT(DISTINCT ticker) FROM balance_sheet) as stocks_with_bs,
+                  (SELECT COUNT(DISTINCT ticker) FROM cash_flow) as stocks_with_cf,
+                  (SELECT COUNT(DISTINCT ticker) FROM quarterly_results) as stocks_with_quarterly,
+                  (SELECT COUNT(DISTINCT ticker) FROM annual_ratios) as stocks_with_ratios
+          """, conn)
+
+          print(f"\n[DATA COVERAGE]")
+          print(f"Stocks with Annual P&L: {coverage['stocks_with_pl'].iloc[0]}")
+          print(f"Stocks with Balance Sheet: {coverage['stocks_with_bs'].iloc[0]}")
+          print(f"Stocks with Cash Flow: {coverage['stocks_with_cf'].iloc[0]}")
+          print(f"Stocks with Quarterly Data: {coverage['stocks_with_quarterly'].iloc[0]}")
+          print(f"Stocks with Ratios: {coverage['stocks_with_ratios'].iloc[0]}")
+
+          # Historical depth
+          depth = pd.read_sql_query("""
+              SELECT
+                  MIN(year_count) as min_years,
+                  MAX(year_count) as max_years,
+                  AVG(year_count) as avg_years
+              FROM (
+                  SELECT ticker, COUNT(*) as year_count
+                  FROM annual_profit_loss
+                  GROUP BY ticker
+              )
+          """, conn)
+
+          print(f"\n[HISTORICAL DEPTH - Annual Data]")
+          print(f"Min years: {int(depth['min_years'].iloc[0])}")
+          print(f"Max years: {int(depth['max_years'].iloc[0])}")
+          print(f"Avg years: {depth['avg_years'].iloc[0]:.1f}")
+
+          conn.close()
           EOF
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "Workflow completed"
+          if [ -f "screener_data.db" ]; then
+            db_size=$(du -h screener_data.db | cut -f1)
+            echo "Final database size: $db_size"
           fi
